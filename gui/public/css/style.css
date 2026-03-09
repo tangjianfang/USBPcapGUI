@@ -103,6 +103,38 @@ html, body {
 .badge-warning { background: var(--warning); color: #000; }
 .badge-danger { background: var(--danger); color: #fff; }
 
+/* ── Install banner ── */
+.install-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(255, 152, 0, 0.12);
+    border-bottom: 1px solid rgba(255, 152, 0, 0.4);
+}
+
+.install-banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.install-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-warning {
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: rgba(255, 152, 0, 0.15);
+}
+
 /* ── Main Layout ── */
 #main-layout {
     display: flex;

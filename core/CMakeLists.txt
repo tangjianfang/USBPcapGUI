@@ -41,4 +41,4 @@ endif()
 
 # Core service executable
 add_executable(bhplus-core src/main.cpp)
-target_link_libraries(bhplus-core PRIVATE bhplus_core)
+target_link_libraries(bhplus-core PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,bhplus_core>)

@@ -45,17 +45,7 @@ wss.on('connection', (ws) => {
     wsClients.add(ws);
     console.log(`[WS] Client connected (${wsClients.size} total)`);
 
-    // Send current state
-    ws.send(JSON.stringify({
-        type: 'init',
-        data: {
-            capturing,
-            demoMode: core.demoMode,
-            eventCount: captureEvents.length,
-            // Send last 1000 events as initial batch
-            events: captureEvents.slice(-1000)
-        }
-    }));
+    void sendInitialState(ws);
 
     ws.on('message', async (raw) => {
         try {
@@ -106,6 +96,18 @@ async function handleWsMessage(ws, msg) {
             ws.send(JSON.stringify({ type: 'stats', data: stats }));
             break;
         }
+        case 'usbpcap.status': {
+            const status = await core.request('usbpcap.status');
+            ws.send(JSON.stringify({ type: 'usbpcap.status', data: status }));
+            break;
+        }
+        case 'usbpcap.install': {
+            const result = await core.request('usbpcap.install');
+            ws.send(JSON.stringify({ type: 'usbpcap.install', data: result }));
+            const status = await core.request('usbpcap.status');
+            broadcast({ type: 'usbpcap.status', data: status });
+            break;
+        }
         case 'events.query': {
             // Query events with filter
             const { offset = 0, limit = 1000, filter } = msg.data || {};
@@ -131,6 +133,27 @@ async function handleWsMessage(ws, msg) {
         default:
             ws.send(JSON.stringify({ type: 'error', data: { message: `Unknown command: ${msg.type}` } }));
     }
+}
+
+async function sendInitialState(ws) {
+    let usbpcap = { installed: false, installerFound: false, hubs: [] };
+    try {
+        usbpcap = await core.request('usbpcap.status');
+    } catch (e) {
+        console.warn('[WS] Failed to query USBPcap status:', e.message);
+    }
+
+    ws.send(JSON.stringify({
+        type: 'init',
+        data: {
+            capturing,
+            demoMode: core.demoMode,
+            eventCount: captureEvents.length,
+            usbpcap,
+            // Send last 1000 events as initial batch
+            events: captureEvents.slice(-1000)
+        }
+    }));
 }
 
 /**

@@ -101,6 +101,8 @@ public:
     std::string   LastError() const { return m_lastError; }
 
 private:
+    bool SendControlIoctl(DWORD code, const char* name);
+    bool SetupBuffer(uint32_t snapshotLen);
     void ReadLoop(EventCallback cb, std::atomic<uint64_t>& seqCounter);
 
     RootHubInfo  m_hub;

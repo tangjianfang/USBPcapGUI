@@ -87,6 +87,9 @@ private:
     std::string HandleCaptureStop(const std::string& paramsJson);
     std::string HandleCaptureStatus(const std::string& paramsJson);
     std::string HandleDevicesList(const std::string& paramsJson);
+    std::string HandleHubsList(const std::string& paramsJson);
+    std::string HandleUsbPcapStatus(const std::string& paramsJson);
+    std::string HandleUsbPcapInstall(const std::string& paramsJson);
     std::string HandleEventsQuery(const std::string& paramsJson);
     std::string HandleDeviceReset(const std::string& paramsJson);
 

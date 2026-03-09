@@ -21,6 +21,10 @@ class BHPlusWebSocket {
         this.handlers.get(type).push(callback);
     }
 
+    isConnected() {
+        return this.connected;
+    }
+
     /**
      * Connect to the WebSocket server
      */
@@ -33,6 +37,7 @@ class BHPlusWebSocket {
         this.ws.onopen = () => {
             console.log('[WS] Connected');
             this.connected = true;
+            this._emit('open');
             this._emit('connected');
             if (this.reconnectTimer) {
                 clearTimeout(this.reconnectTimer);
@@ -43,6 +48,7 @@ class BHPlusWebSocket {
         this.ws.onmessage = (event) => {
             try {
                 const msg = JSON.parse(event.data);
+                this._emit('message', msg);
                 this._emit(msg.type, msg.data);
             } catch (e) {
                 console.error('[WS] Parse error:', e);
@@ -52,6 +58,7 @@ class BHPlusWebSocket {
         this.ws.onclose = () => {
             console.log('[WS] Disconnected');
             this.connected = false;
+            this._emit('close');
             this._emit('disconnected');
             // Auto-reconnect
             this.reconnectTimer = setTimeout(() => this.connect(), 2000);

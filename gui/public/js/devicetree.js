@@ -32,8 +32,16 @@ const DeviceTree = {
      * @param {object[]} devices - Array of device objects { id, name, bus, vid, pid, serial, driver, path, children? }
      */
     update(devices) {
-        this._devices = devices || [];
+        this._devices = (devices || []).map(dev => ({
+            ...dev,
+            id: dev.id ?? (((dev.bus || 0) << 16) | (dev.device || 0)),
+            busType: dev.busType || 'USB'
+        }));
         this._render();
+    },
+
+    getSelectedDevice() {
+        return this._devices.find(d => d.id === this._selectedDeviceId) || null;
     },
 
     /**
@@ -67,7 +75,7 @@ const DeviceTree = {
         // Group by bus type
         const groups = {};
         for (const dev of this._devices) {
-            const bus = dev.bus || 'Other';
+            const bus = dev.busType || 'Other';
             if (!groups[bus]) groups[bus] = [];
             groups[bus].push(dev);
         }

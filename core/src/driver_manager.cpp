@@ -8,12 +8,179 @@
 #include <shellapi.h>
 #include <newdev.h>
 #include <cfgmgr32.h>
+#include <vector>
 
 #pragma comment(lib, "newdev.lib")
 #pragma comment(lib, "setupapi.lib")
 #pragma comment(lib, "shell32.lib")
 
 namespace bhplus {
+
+namespace {
+
+constexpr wchar_t kUsbPcapServiceName[] = L"USBPcap";
+constexpr wchar_t kUsbClassKey[] = L"SYSTEM\\CurrentControlSet\\Control\\Class\\{36fc9e60-c465-11cf-8056-444553540000}";
+constexpr wchar_t kUsbPcapServiceKey[] = L"SYSTEM\\CurrentControlSet\\Services\\USBPcap";
+
+uint32_t ProbeUsbPcapInterfaceCount() {
+    uint32_t count = 0;
+    for (int n = 1; n <= 16; ++n) {
+        std::wstring path = L"\\\\.\\USBPcap" + std::to_wstring(n);
+        HANDLE h = CreateFileW(path.c_str(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            ++count;
+            CloseHandle(h);
+            continue;
+        }
+
+        const DWORD err = GetLastError();
+        if (err == ERROR_ACCESS_DENIED || err == ERROR_SHARING_VIOLATION) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool RegistryKeyExists(HKEY root, const wchar_t* subKey) {
+    HKEY hKey = nullptr;
+    const LONG rc = RegOpenKeyExW(root, subKey, 0, KEY_READ, &hKey);
+    if (rc == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+    return false;
+}
+
+bool RegistryMultiSzContains(HKEY root,
+                             const wchar_t* subKey,
+                             const wchar_t* valueName,
+                             const wchar_t* needle) {
+    DWORD type = 0;
+    DWORD size = 0;
+    LONG rc = RegGetValueW(root, subKey, valueName,
+                           RRF_RT_REG_MULTI_SZ, &type, nullptr, &size);
+    if (rc != ERROR_SUCCESS || size == 0) {
+        return false;
+    }
+
+    std::vector<wchar_t> buffer((size / sizeof(wchar_t)) + 2, L'\0');
+    rc = RegGetValueW(root, subKey, valueName,
+                      RRF_RT_REG_MULTI_SZ, &type, buffer.data(), &size);
+    if (rc != ERROR_SUCCESS) {
+        return false;
+    }
+
+    for (const wchar_t* p = buffer.data(); *p != L'\0'; p += wcslen(p) + 1) {
+        if (_wcsicmp(p, needle) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ServiceExists(const wchar_t* name) {
+    SC_HANDLE scManager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scManager) return false;
+
+    SC_HANDLE service = OpenServiceW(scManager, name, SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scManager);
+        return false;
+    }
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scManager);
+    return true;
+}
+
+bool QueryServiceRunning(const wchar_t* name) {
+    SC_HANDLE scManager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scManager) return false;
+
+    SC_HANDLE service = OpenServiceW(scManager, name, SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scManager);
+        return false;
+    }
+
+    SERVICE_STATUS_PROCESS status{};
+    DWORD bytesNeeded = 0;
+    const BOOL ok = QueryServiceStatusEx(
+        service,
+        SC_STATUS_PROCESS_INFO,
+        reinterpret_cast<LPBYTE>(&status),
+        sizeof(status),
+        &bytesNeeded);
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scManager);
+
+    return ok && status.dwCurrentState == SERVICE_RUNNING;
+}
+
+std::wstring JoinPath(const std::wstring& dir, const std::wstring& leaf) {
+    if (dir.empty()) return leaf;
+    if (dir.back() == L'\\' || dir.back() == L'/') return dir + leaf;
+    return dir + L"\\" + leaf;
+}
+
+std::wstring FindInstallerInDirectory(const std::wstring& dir) {
+    if (dir.empty()) return {};
+
+    for (const wchar_t* name : {
+             L"USBPcap-installer.exe",
+             L"USBPcapSetup.exe",
+             L"USBPcap-setup.exe",
+             L"USBPcapSetup-1.5.4.0.exe" }) {
+        std::wstring candidate = JoinPath(dir, name);
+        if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            return candidate;
+        }
+    }
+
+    WIN32_FIND_DATAW data{};
+    const std::wstring pattern = JoinPath(dir, L"USBPcap*.exe");
+    HANDLE find = FindFirstFileW(pattern.c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+
+    std::wstring result = JoinPath(dir, data.cFileName);
+    FindClose(find);
+    return result;
+}
+
+std::vector<std::wstring> GetInstallerSearchRoots() {
+    std::vector<std::wstring> roots;
+
+    wchar_t exePath[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) != 0) {
+        std::wstring exeDir(exePath);
+        const auto slash = exeDir.rfind(L'\\');
+        if (slash != std::wstring::npos) {
+            exeDir.resize(slash);
+            roots.push_back(exeDir);
+            roots.push_back(JoinPath(exeDir, L"USBPcap"));
+        }
+    }
+
+    wchar_t cwd[MAX_PATH]{};
+    if (GetCurrentDirectoryW(MAX_PATH, cwd) != 0) {
+        roots.push_back(cwd);
+        roots.push_back(JoinPath(cwd, L"USBPcap"));
+        roots.push_back(JoinPath(cwd, L"usbPcap"));
+    }
+
+    return roots;
+}
+
+} // namespace
 
 bool DriverManager::IsDriverLoaded() {
     SC_HANDLE scManager = OpenSCManager(nullptr, nullptr, SC_MANAGER_CONNECT);
@@ -150,46 +317,60 @@ std::string DriverManager::GetDriverVersion() {
 // ── USBPcap ──────────────────────────────────────────────────────────────
 
 bool DriverManager::IsUSBPcapInstalled() {
-    for (int n = 1; n <= 16; ++n) {
-        std::wstring path = L"\\\\.\\USBPcap" + std::to_wstring(n);
-        HANDLE h = CreateFileW(path.c_str(),
-            GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr, OPEN_EXISTING, 0, nullptr);
-        if (h != INVALID_HANDLE_VALUE) {
-            CloseHandle(h);
-            return true;
-        }
-        DWORD err = GetLastError();
-        // ERROR_ACCESS_DENIED still means the device exists
-        if (err == ERROR_ACCESS_DENIED) return true;
-        if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND)
-            return true;
+    return GetUSBPcapInterfaceCount() > 0 ||
+           IsUSBPcapServiceInstalled() ||
+           HasUSBPcapUpperFilter() ||
+           RegistryKeyExists(HKEY_LOCAL_MACHINE, kUsbPcapServiceKey) ||
+           GetFileAttributesW(L"C:\\Program Files\\USBPcap\\USBPcap.sys") != INVALID_FILE_ATTRIBUTES;
+}
+
+uint32_t DriverManager::GetUSBPcapInterfaceCount() {
+    return ProbeUsbPcapInterfaceCount();
+}
+
+bool DriverManager::IsUSBPcapServiceInstalled() {
+    return ServiceExists(kUsbPcapServiceName) ||
+           RegistryKeyExists(HKEY_LOCAL_MACHINE, kUsbPcapServiceKey);
+}
+
+bool DriverManager::IsUSBPcapDriverRunning() {
+    return QueryServiceRunning(kUsbPcapServiceName);
+}
+
+bool DriverManager::HasUSBPcapUpperFilter() {
+    return RegistryMultiSzContains(HKEY_LOCAL_MACHINE,
+                                   kUsbClassKey,
+                                   L"UpperFilters",
+                                   L"USBPcap");
+}
+
+bool DriverManager::StartUSBPcapDriver() {
+    SC_HANDLE scManager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scManager) return false;
+
+    SC_HANDLE service = OpenServiceW(scManager,
+                                     kUsbPcapServiceName,
+                                     SERVICE_START | SERVICE_QUERY_STATUS);
+    if (!service) {
+        CloseServiceHandle(scManager);
+        return false;
     }
-    // Also check registry key as fallback
-    HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-                      L"SOFTWARE\\USBPcap",
-                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        RegCloseKey(hKey);
-        return true;
-    }
-    return false;
+
+    BOOL started = StartServiceW(service, 0, nullptr);
+    const DWORD err = started ? ERROR_SUCCESS : GetLastError();
+    const bool running = started || err == ERROR_SERVICE_ALREADY_RUNNING || QueryServiceRunning(kUsbPcapServiceName);
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scManager);
+    return running;
 }
 
 std::wstring DriverManager::GetUSBPcapInstallerPath() {
-    wchar_t exePath[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
-    std::wstring dir(exePath);
-    auto slash = dir.rfind(L'\\');
-    if (slash != std::wstring::npos) dir.resize(slash + 1);
-
-    for (const wchar_t* name : {
-            L"USBPcap-installer.exe",
-            L"USBPcapSetup.exe",
-            L"USBPcap-setup.exe" }) {
-        std::wstring candidate = dir + name;
-        if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
+    for (const auto& dir : GetInstallerSearchRoots()) {
+        std::wstring candidate = FindInstallerInDirectory(dir);
+        if (!candidate.empty()) {
             return candidate;
+        }
     }
     return {};
 }

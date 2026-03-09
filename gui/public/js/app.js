@@ -8,6 +8,7 @@ const App = {
 
     _capturing: false,
     _connected: false,
+    _usbpcapStatus: null,
 
     // ---- Initialization ----
 
@@ -17,6 +18,7 @@ const App = {
         DeviceTree.init();
 
         this._bindToolbar();
+        this._bindUsbPcapBanner();
         this._bindFilterBar();
         this._bindKeyboard();
         this._bindDetailTabs();
@@ -26,7 +28,7 @@ const App = {
 
         // Initial UI state
         this._updateCaptureUI(false);
-        document.getElementById('status-connection').textContent = 'Connecting...';
+        this._updateConnectionBadge('Connecting...', 'badge-info');
     },
 
     // ---- WebSocket ----
@@ -34,15 +36,14 @@ const App = {
     _initWebSocket() {
         window.bhWs.on('open', () => {
             this._connected = true;
-            document.getElementById('status-connection').textContent = 'Connected';
-            document.getElementById('status-connection').classList.add('connected');
+            this._updateConnectionBadge('LIVE', 'badge-success');
             DeviceTree.enumerate();
+            window.bhWs.send('stats.get');
         });
 
         window.bhWs.on('close', () => {
             this._connected = false;
-            document.getElementById('status-connection').textContent = 'Disconnected';
-            document.getElementById('status-connection').classList.remove('connected');
+            this._updateConnectionBadge('DISCONNECTED', 'badge-warning');
         });
 
         window.bhWs.on('message', (msg) => {
@@ -54,6 +55,16 @@ const App = {
 
     _handleMessage(msg) {
         switch (msg.type) {
+            case 'init':
+                this._capturing = !!msg.data.capturing;
+                this._updateCaptureUI(this._capturing);
+                if (Array.isArray(msg.data.events) && msg.data.events.length) {
+                    CaptureTable.addEvents(msg.data.events);
+                }
+                this._updateUsbPcapStatus(msg.data.usbpcap || null);
+                this._updateConnectionBadge(msg.data.demoMode ? 'DEMO' : 'LIVE', msg.data.demoMode ? 'badge-info' : 'badge-success');
+                break;
+
             case 'capture.event':
                 CaptureTable.addEvent(msg.data);
                 break;
@@ -84,18 +95,42 @@ const App = {
                 this._updateStats(msg.data);
                 break;
 
+            case 'status':
+                if (msg.data && typeof msg.data.capturing === 'boolean') {
+                    this._capturing = msg.data.capturing;
+                    this._updateCaptureUI(this._capturing);
+                }
+                if (msg.data && msg.data.demoMode) {
+                    this._updateConnectionBadge('DEMO', 'badge-info');
+                } else if (msg.data && msg.data.coreConnected) {
+                    this._updateConnectionBadge('LIVE', 'badge-success');
+                }
+                break;
+
+            case 'usbpcap.status':
+                this._updateUsbPcapStatus(msg.data);
+                break;
+
+            case 'usbpcap.install':
+                if (msg.data && msg.data.ok) {
+                    this._showError('USBPcap 安装程序已启动，请完成安装后点击刷新状态。');
+                } else {
+                    this._showError((msg.data && msg.data.message) || '无法启动 USBPcap 安装程序');
+                }
+                break;
+
             case 'events.result':
                 // Response to a query - replace table contents
                 CaptureTable.clear();
-                CaptureTable.addEvents(msg.data);
+                CaptureTable.addEvents(msg.data.events || []);
                 break;
 
-            case 'export.ready':
+            case 'export.result':
                 this._downloadExport(msg.data);
                 break;
 
             case 'error':
-                this._showError(msg.message || 'Unknown error');
+                this._showError((msg.data && msg.data.message) || msg.message || 'Unknown error');
                 break;
 
             default:
@@ -110,6 +145,7 @@ const App = {
         document.getElementById('btn-stop').addEventListener('click', () => this.stopCapture());
         document.getElementById('btn-clear').addEventListener('click', () => this.clearCapture());
         document.getElementById('btn-export').addEventListener('click', () => this.showExportDialog());
+        document.getElementById('btn-refresh-devices').addEventListener('click', () => DeviceTree.enumerate());
 
         const autoScrollBtn = document.getElementById('btn-autoscroll');
         if (autoScrollBtn) {
@@ -120,10 +156,30 @@ const App = {
         }
     },
 
+    _bindUsbPcapBanner() {
+        const installBtn = document.getElementById('btn-install-usbpcap');
+        const refreshBtn = document.getElementById('btn-refresh-usbpcap');
+
+        if (installBtn) {
+            installBtn.addEventListener('click', () => {
+                window.bhWs.send('usbpcap.install');
+            });
+        }
+
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                window.bhWs.send('usbpcap.status');
+                DeviceTree.enumerate();
+            });
+        }
+    },
+
     startCapture() {
         if (!this._connected) return;
+        const selected = DeviceTree.getSelectedDevice();
         window.bhWs.send('capture.start', {
-            deviceId: DeviceTree.getSelectedDeviceId()
+            deviceIds: selected ? [selected.device] : [],
+            filterBus: selected ? selected.bus : 0
         });
     },
 
@@ -141,7 +197,8 @@ const App = {
 
     _bindFilterBar() {
         const filterInput = document.getElementById('filter-input');
-        const filterClear = document.getElementById('filter-clear');
+        const filterClear = document.getElementById('btn-filter-clear');
+        const filterApply = document.getElementById('btn-filter-apply');
 
         let debounceTimer = null;
         filterInput.addEventListener('input', () => {
@@ -163,6 +220,12 @@ const App = {
             filterClear.addEventListener('click', () => {
                 filterInput.value = '';
                 CaptureTable.setFilter('');
+            });
+        }
+
+        if (filterApply) {
+            filterApply.addEventListener('click', () => {
+                CaptureTable.setFilter(filterInput.value);
             });
         }
     },
@@ -208,17 +271,17 @@ const App = {
     // ---- Detail Panel ----
 
     _bindDetailTabs() {
-        const tabs = document.querySelectorAll('.detail-tab');
+        const tabs = document.querySelectorAll('.tab');
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
 
                 const target = tab.dataset.tab;
-                document.querySelectorAll('.detail-content').forEach(c => {
+                document.querySelectorAll('.tab-content').forEach(c => {
                     c.classList.remove('active');
                 });
-                const panel = document.getElementById('detail-' + target);
+                const panel = document.getElementById(target);
                 if (panel) panel.classList.add('active');
             });
         });
@@ -228,21 +291,21 @@ const App = {
      * Called by CaptureTable when a row is selected
      */
     onEventSelected(event) {
-        const hexPanel = document.getElementById('detail-hex');
-        const decodePanel = document.getElementById('detail-decode');
+        const hexPanel = document.getElementById('hex-view');
+        const decodePanel = document.getElementById('decode-body');
 
         if (!event) {
-            if (hexPanel) hexPanel.innerHTML = '<div class="detail-placeholder">Select an event to view details</div>';
-            if (decodePanel) decodePanel.innerHTML = '<div class="detail-placeholder">Select an event to view decode</div>';
+            if (hexPanel) hexPanel.innerHTML = 'Select an event to view details';
+            if (decodePanel) decodePanel.innerHTML = '<tr><td colspan="3">Select an event to view decode</td></tr>';
             return;
         }
 
         // Hex view
         if (hexPanel) {
             if (event.data) {
-                hexPanel.innerHTML = HexView.render(event.data);
+                hexPanel.innerHTML = HexView.format(event.data);
             } else {
-                hexPanel.innerHTML = '<div class="detail-placeholder">No data payload</div>';
+                hexPanel.innerHTML = 'No data payload';
             }
         }
 
@@ -254,81 +317,86 @@ const App = {
 
     _renderDecode(event) {
         const fields = [];
+        let html = '';
 
-        fields.push(['Sequence', event.seq]);
-        fields.push(['Timestamp', this._formatTimestamp(event.timestamp)]);
-        fields.push(['Protocol', event.protocol]);
-        fields.push(['Device', event.device]);
-        if (event.deviceId !== undefined) fields.push(['Device ID', event.deviceId]);
-        fields.push(['Phase', event.phase]);
-        fields.push(['Direction', event.direction]);
-        fields.push(['Command', event.command]);
-        fields.push(['Status', event.status]);
-        if (event.dataLength !== undefined) fields.push(['Data Length', event.dataLength + ' bytes']);
-        if (event.duration !== undefined) fields.push(['Duration', event.duration + ' µs']);
+        fields.push(['Sequence', event.seq, '']);
+        fields.push(['Timestamp', this._formatTimestamp(event.timestamp), '']);
+        fields.push(['Protocol', event.protocol, '']);
+        fields.push(['Device', event.device, '']);
+        if (event.deviceId !== undefined) fields.push(['Device ID', event.deviceId, '']);
+        fields.push(['Phase', event.phase, '']);
+        fields.push(['Direction', event.direction, '']);
+        fields.push(['Command', event.command, '']);
+        fields.push(['Status', event.status, '']);
+        if (event.dataLength !== undefined) fields.push(['Data Length', event.dataLength + ' bytes', '']);
+        if (event.duration !== undefined) fields.push(['Duration', event.duration + ' µs', '']);
+        if (event.summary) fields.push(['Summary', event.summary, '']);
 
         // Protocol-specific fields
+        if (event.decodedFields && event.decodedFields.length) {
+            fields.push(['---', '--- Decoded Fields ---', '']);
+            for (const field of event.decodedFields) {
+                fields.push([field.name, field.value, field.description || '']);
+            }
+        }
         if (event.details) {
-            fields.push(['---', '--- Protocol Details ---']);
+            fields.push(['---', '--- Protocol Details ---', '']);
             for (const [key, val] of Object.entries(event.details)) {
-                fields.push([key, val]);
+                fields.push([key, val, '']);
             }
         }
 
-        let html = '<table class="decode-table">';
-        for (const [key, val] of fields) {
+        for (const [key, val, desc] of fields) {
             if (key === '---') {
-                html += `<tr class="decode-separator"><td colspan="2">${this._esc(String(val))}</td></tr>`;
+                html += `<tr class="decode-separator"><td colspan="3">${this._esc(String(val))}</td></tr>`;
             } else {
-                html += `<tr><td class="decode-key">${this._esc(String(key))}</td><td class="decode-value">${this._esc(String(val ?? ''))}</td></tr>`;
+                html += `<tr><td class="decode-key">${this._esc(String(key))}</td><td class="decode-value">${this._esc(String(val ?? ''))}</td><td>${this._esc(String(desc || ''))}</td></tr>`;
             }
         }
-        html += '</table>';
         return html;
     },
 
     // ---- Resize Handles ----
 
     _bindResizeHandles() {
-        this._makeResizable('device-panel', 'resize-handle-device', 'horizontal', 180, 500);
-        this._makeResizable('detail-panel', 'resize-handle-detail', 'vertical', 100, 600);
-    },
+        const handles = document.querySelectorAll('.resize-handle');
+        handles.forEach(handle => {
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                const leftId = handle.dataset.left;
+                const rightId = handle.dataset.right;
+                const topId = handle.dataset.top;
+                const bottomId = handle.dataset.bottom;
 
-    _makeResizable(panelId, handleId, direction, minSize, maxSize) {
-        const handle = document.getElementById(handleId);
-        const panel = document.getElementById(panelId);
-        if (!handle || !panel) return;
-
-        let startPos, startSize;
-
-        const onMouseMove = (e) => {
-            let delta;
-            if (direction === 'horizontal') {
-                delta = e.clientX - startPos;
-                const newWidth = Math.min(maxSize, Math.max(minSize, startSize + delta));
-                panel.style.width = newWidth + 'px';
-            } else {
-                delta = startPos - e.clientY;
-                const newHeight = Math.min(maxSize, Math.max(minSize, startSize + delta));
-                panel.style.height = newHeight + 'px';
-            }
-        };
-
-        const onMouseUp = () => {
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', onMouseUp);
-            document.body.style.userSelect = '';
-            document.body.style.cursor = '';
-        };
-
-        handle.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            startPos = direction === 'horizontal' ? e.clientX : e.clientY;
-            startSize = direction === 'horizontal' ? panel.offsetWidth : panel.offsetHeight;
-            document.body.style.userSelect = 'none';
-            document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize';
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
+                if (leftId && rightId) {
+                    const left = document.getElementById(leftId);
+                    const startX = e.clientX;
+                    const startWidth = left.offsetWidth;
+                    const onMove = (ev) => {
+                        left.style.width = Math.max(180, startWidth + (ev.clientX - startX)) + 'px';
+                    };
+                    const onUp = () => {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                } else if (topId && bottomId) {
+                    const top = document.getElementById(topId);
+                    const startY = e.clientY;
+                    const startHeight = top.offsetHeight;
+                    const onMove = (ev) => {
+                        top.style.flex = 'none';
+                        top.style.height = Math.max(120, startHeight + (ev.clientY - startY)) + 'px';
+                    };
+                    const onUp = () => {
+                        document.removeEventListener('mousemove', onMove);
+                        document.removeEventListener('mouseup', onUp);
+                    };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                }
+            });
         });
     },
 
@@ -338,38 +406,25 @@ const App = {
         const dialog = document.getElementById('export-dialog');
         if (!dialog) return;
 
-        const overlay = document.getElementById('export-overlay');
-        const closeBtn = document.getElementById('export-close');
-        const exportBtn = document.getElementById('export-confirm');
+        const closeBtn = document.getElementById('btn-export-cancel');
+        const exportBtn = document.getElementById('btn-export-ok');
 
-        if (overlay) overlay.addEventListener('click', () => this.hideExportDialog());
         if (closeBtn) closeBtn.addEventListener('click', () => this.hideExportDialog());
         if (exportBtn) exportBtn.addEventListener('click', () => this._doExport());
     },
 
     showExportDialog() {
         const dialog = document.getElementById('export-dialog');
-        const overlay = document.getElementById('export-overlay');
-        if (dialog) dialog.style.display = 'block';
-        if (overlay) overlay.style.display = 'block';
-
-        // Update count
-        const countEl = document.getElementById('export-event-count');
-        if (countEl) {
-            const filtered = CaptureTable.getFilteredEvents();
-            countEl.textContent = `${filtered.length} events (filtered)`;
-        }
+        if (dialog && dialog.showModal) dialog.showModal();
     },
 
     hideExportDialog() {
         const dialog = document.getElementById('export-dialog');
-        const overlay = document.getElementById('export-overlay');
-        if (dialog) dialog.style.display = 'none';
-        if (overlay) overlay.style.display = 'none';
+        if (dialog && dialog.close) dialog.close();
     },
 
     _doExport() {
-        const formatEl = document.querySelector('input[name="export-format"]:checked');
+        const formatEl = document.getElementById('export-format');
         const format = formatEl ? formatEl.value : 'json';
 
         window.bhWs.send('export', { format });
@@ -378,7 +433,7 @@ const App = {
 
     _downloadExport(data) {
         if (!data || !data.content) return;
-        const blob = new Blob([data.content], { type: data.mimeType || 'application/octet-stream' });
+        const blob = new Blob([data.content], { type: data.mimeType || data.mime || 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -402,13 +457,14 @@ const App = {
     // ---- Stats ----
 
     _updateStats(stats) {
-        if (stats.capturedEvents !== undefined) {
+        const normalized = stats && stats.stats ? stats.stats : stats;
+        if (normalized.totalEvents !== undefined) {
             const el = document.getElementById('event-count');
-            if (el) el.textContent = stats.capturedEvents;
+            if (el) el.textContent = `Events: ${normalized.totalEvents}`;
         }
-        if (stats.bytesPerSec !== undefined) {
-            const el = document.getElementById('status-rate');
-            if (el) el.textContent = this._formatRate(stats.bytesPerSec);
+        if (normalized.eventsDropped !== undefined) {
+            const el = document.getElementById('dropped-count');
+            if (el) el.textContent = `Dropped: ${normalized.eventsDropped}`;
         }
     },
 
@@ -417,14 +473,53 @@ const App = {
     _updateCaptureUI(capturing) {
         const btnStart = document.getElementById('btn-start');
         const btnStop = document.getElementById('btn-stop');
-        const statusCapture = document.getElementById('status-capture');
 
         if (btnStart) btnStart.disabled = capturing;
         if (btnStop) btnStop.disabled = !capturing;
-        if (statusCapture) {
-            statusCapture.textContent = capturing ? '● Capturing' : '○ Idle';
-            statusCapture.classList.toggle('capturing', capturing);
+    },
+
+    _updateConnectionBadge(text, badgeClass) {
+        const badge = document.getElementById('status-badge');
+        if (!badge) return;
+        badge.textContent = text;
+        badge.className = `badge ${badgeClass}`;
+    },
+
+    _updateUsbPcapStatus(status) {
+        this._usbpcapStatus = status;
+
+        const banner = document.getElementById('usbpcap-banner');
+        const detail = document.getElementById('usbpcap-banner-detail');
+        const installBtn = document.getElementById('btn-install-usbpcap');
+
+        if (!banner || !detail || !installBtn) return;
+
+        if (!status) {
+            banner.classList.add('hidden');
+            return;
         }
+
+        const hubCount = Array.isArray(status.hubs) ? status.hubs.length : 0;
+
+        if (status.installed && ((status.interfacesAvailable || 0) > 0 || hubCount > 0)) {
+            banner.classList.add('hidden');
+            return;
+        }
+
+        if (!status.installed) {
+            detail.textContent = status.installerFound
+                ? '尚未检测到可用的 USBPcap 安装。请先安装 USBPcap，再点击刷新状态。'
+                : '未找到随程序打包的 USBPcap 安装器，请手动安装后点击刷新状态。';
+        } else if (status.restartRecommended) {
+            detail.textContent = 'USBPcap 已安装，但当前系统尚未暴露抓包接口。请先重启系统，或完成 USB 设备重启后再点击刷新状态。';
+        } else if (status.driverServiceInstalled && !status.driverServiceRunning) {
+            detail.textContent = 'USBPcap 已安装，但驱动服务尚未运行。请以管理员身份启动后刷新状态。';
+        } else {
+            detail.textContent = `USBPcap 已安装，但当前未检测到可用实例（当前 ${hubCount} 个）。请刷新状态或重启系统后重试。`;
+        }
+
+        installBtn.disabled = !!status.installed || !status.installerFound;
+        banner.classList.remove('hidden');
     },
 
     // ---- Utilities ----

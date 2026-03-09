@@ -1,5 +1,6 @@
 # Build outputs
 build/
+build_fresh/
 out/
 x64/
 Debug/

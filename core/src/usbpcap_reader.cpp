@@ -15,6 +15,15 @@
 
 namespace bhplus {
 
+static std::string Narrow(const std::wstring& value) {
+    if (value.empty()) return {};
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) return {};
+    std::string out(static_cast<size_t>(size - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, out.data(), size, nullptr, nullptr);
+    return out;
+}
+
 /* ──────────── Install Check ──────────── */
 
 bool IsUsbPcapInstalled() {
@@ -197,22 +206,26 @@ UsbPcapReader::~UsbPcapReader() {
     Close();
 }
 
-bool UsbPcapReader::Open(uint32_t snapshotLen) {
-    if (m_handle != INVALID_HANDLE_VALUE) return true;
-
-    m_handle = CreateFileW(m_hub.devicePath.c_str(),
-        GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr, OPEN_EXISTING, 0, nullptr);
-
+bool UsbPcapReader::SendControlIoctl(DWORD code, const char* name) {
     if (m_handle == INVALID_HANDLE_VALUE) {
-        m_lastError = "Cannot open " +
-            std::string(m_hub.devicePath.begin(), m_hub.devicePath.end()) +
-            " error=" + std::to_string(GetLastError());
-        spdlog::error("[usbpcap] {}", m_lastError);
+        m_lastError = std::string(name) + ": handle not open";
         return false;
     }
 
-    // IOCTL_USBPCAP_SETUP_BUFFER: set snapshot length
+    DWORD returned = 0;
+    if (!DeviceIoControl(m_handle, code,
+                         nullptr, 0,
+                         nullptr, 0,
+                         &returned, nullptr)) {
+        m_lastError = std::string(name) + " failed: " + std::to_string(GetLastError());
+        spdlog::warn("[usbpcap] {}", m_lastError);
+        return false;
+    }
+
+    return true;
+}
+
+bool UsbPcapReader::SetupBuffer(uint32_t snapshotLen) {
     DWORD bufLen = (snapshotLen == 0) ? 65535u : snapshotLen;
     DWORD returned = 0;
     if (!DeviceIoControl(m_handle,
@@ -223,14 +236,35 @@ bool UsbPcapReader::Open(uint32_t snapshotLen) {
         m_lastError = "IOCTL_USBPCAP_SETUP_BUFFER failed: " +
                        std::to_string(GetLastError());
         spdlog::error("[usbpcap] {}", m_lastError);
+        return false;
+    }
+    return true;
+}
+
+bool UsbPcapReader::Open(uint32_t snapshotLen) {
+    if (m_handle != INVALID_HANDLE_VALUE) return true;
+
+    m_handle = CreateFileW(m_hub.devicePath.c_str(),
+        GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr, OPEN_EXISTING, 0, nullptr);
+
+    if (m_handle == INVALID_HANDLE_VALUE) {
+        m_lastError = "Cannot open " +
+            Narrow(m_hub.devicePath) +
+            " error=" + std::to_string(GetLastError());
+        spdlog::error("[usbpcap] {}", m_lastError);
+        return false;
+    }
+
+    if (!SetupBuffer(snapshotLen)) {
         CloseHandle(m_handle);
         m_handle = INVALID_HANDLE_VALUE;
         return false;
     }
 
     spdlog::info("[usbpcap] Opened {} snaplen={}", 
-        std::string(m_hub.devicePath.begin(), m_hub.devicePath.end()),
-        bufLen);
+        Narrow(m_hub.devicePath),
+        (snapshotLen == 0) ? 65535u : snapshotLen);
     return true;
 }
 
@@ -279,6 +313,10 @@ bool UsbPcapReader::StartCapture(EventCallback cb,
         return false;
     }
 
+    if (!SendControlIoctl(IOCTL_USBPCAP_START, "IOCTL_USBPCAP_START")) {
+        return false;
+    }
+
     m_running = true;
     m_thread = std::thread([this, cb, &seqCounter]() {
         ReadLoop(cb, seqCounter);
@@ -288,6 +326,8 @@ bool UsbPcapReader::StartCapture(EventCallback cb,
 
 void UsbPcapReader::StopCapture() {
     if (!m_running.exchange(false)) return;
+
+    SendControlIoctl(IOCTL_USBPCAP_STOP, "IOCTL_USBPCAP_STOP");
 
     // Cancel any pending I/O on the handle — will unblock ReadFile
     if (m_handle != INVALID_HANDLE_VALUE) {
@@ -300,7 +340,7 @@ void UsbPcapReader::StopCapture() {
 void UsbPcapReader::ReadLoop(EventCallback cb,
                               std::atomic<uint64_t>& seqCounter) {
     spdlog::info("[usbpcap] ReadLoop start: {}",
-        std::string(m_hub.devicePath.begin(), m_hub.devicePath.end()));
+        Narrow(m_hub.devicePath));
 
     PcapStream stream(m_handle);
     if (!stream.ReadGlobalHeader()) {
@@ -353,7 +393,7 @@ void UsbPcapReader::ReadLoop(EventCallback cb,
 
     m_running = false;
     spdlog::info("[usbpcap] ReadLoop end: {}",
-        std::string(m_hub.devicePath.begin(), m_hub.devicePath.end()));
+        Narrow(m_hub.devicePath));
 }
 
 /* ──────────── UsbPcapMultiReader ──────────── */

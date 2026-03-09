@@ -8,9 +8,12 @@
 #include "ipc_server.h"
 #include "capture_engine.h"
 #include "pcap_parser.h"
+#include "parser_interface.h"
+#include "driver_manager.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 
 #include <sstream>
 #include <algorithm>
@@ -288,6 +291,12 @@ void IpcServer::HandleRequest(ClientContext* ctx, const std::string& requestJson
             result = HandleCaptureStatus(paramsStr);
         } else if (method == "devices.list" || method == "devices.enumerate") {
             result = HandleDevicesList(paramsStr);
+        } else if (method == "hubs.list" || method == "usbpcap.instances") {
+            result = HandleHubsList(paramsStr);
+        } else if (method == "usbpcap.status") {
+            result = HandleUsbPcapStatus(paramsStr);
+        } else if (method == "usbpcap.install") {
+            result = HandleUsbPcapInstall(paramsStr);
         } else if (method == "events.query") {
             result = HandleEventsQuery(paramsStr);
         } else if (method == "device.reset") {
@@ -394,6 +403,7 @@ std::string IpcServer::HandleCaptureStart(const std::string& paramsJson) {
     config.MaxEvents       = params.value("maxEvents", 100000u);
     config.SnapshotLength  = params.value("maxDataPerEvent", 4096u);
     config.CaptureData     = params.value("captureData", true) ? 1 : 0;
+    config.FilterBus       = static_cast<UINT16>(params.value("filterBus", 0u));
 
     // Device filter
     if (params.contains("deviceIds") && params["deviceIds"].is_array()) {
@@ -405,6 +415,10 @@ std::string IpcServer::HandleCaptureStart(const std::string& paramsJson) {
             config.FilterDeviceAddresses[i] = static_cast<UINT16>(
                 params["deviceIds"][i].get<uint32_t>());
         }
+    } else if (params.contains("deviceId") && params["deviceId"].is_number_unsigned()) {
+        config.FilterDeviceCount = 1;
+        config.FilterDeviceAddresses[0] = static_cast<UINT16>(
+            params["deviceId"].get<uint32_t>());
     }
 
     bool ok = m_engine->StartCapture(config);
@@ -458,6 +472,63 @@ std::string IpcServer::HandleDevicesList(const std::string& /*paramsJson*/) {
     return result.dump();
 }
 
+std::string IpcServer::HandleHubsList(const std::string& /*paramsJson*/) {
+    json result = json::array();
+
+    for (const auto& hub : CaptureEngine::EnumerateHubs()) {
+        json item;
+        item["index"] = hub.index;
+        item["devicePath"] = WideToUtf8(hub.devicePath.c_str());
+        item["hubSymLink"] = WideToUtf8(hub.hubSymLink.c_str());
+        item["available"] = hub.available;
+        result.push_back(std::move(item));
+    }
+
+    return result.dump();
+}
+
+std::string IpcServer::HandleUsbPcapStatus(const std::string& /*paramsJson*/) {
+    json result;
+    const auto installerPath = DriverManager::GetUSBPcapInstallerPath();
+    const auto interfaceCount = DriverManager::GetUSBPcapInterfaceCount();
+    const bool installed = DriverManager::IsUSBPcapInstalled();
+    const bool serviceInstalled = DriverManager::IsUSBPcapServiceInstalled();
+    const bool serviceRunning = DriverManager::IsUSBPcapDriverRunning();
+    const bool upperFilterRegistered = DriverManager::HasUSBPcapUpperFilter();
+
+    result["installed"] = installed;
+    result["installerFound"] = !installerPath.empty();
+    result["installerPath"] = installerPath.empty() ? std::string() : WideToUtf8(installerPath.c_str());
+    result["interfacesAvailable"] = interfaceCount;
+    result["driverServiceInstalled"] = serviceInstalled;
+    result["driverServiceRunning"] = serviceRunning;
+    result["upperFilterRegistered"] = upperFilterRegistered;
+
+    json hubs = json::array();
+    for (const auto& hub : CaptureEngine::EnumerateHubs()) {
+        hubs.push_back({
+            {"index", hub.index},
+            {"devicePath", WideToUtf8(hub.devicePath.c_str())},
+            {"hubSymLink", WideToUtf8(hub.hubSymLink.c_str())},
+            {"available", hub.available}
+        });
+    }
+    result["restartRecommended"] = installed && interfaceCount == 0 && upperFilterRegistered;
+    result["hubs"] = std::move(hubs);
+    return result.dump();
+}
+
+std::string IpcServer::HandleUsbPcapInstall(const std::string& /*paramsJson*/) {
+    json result;
+    result["ok"] = DriverManager::LaunchUSBPcapInstaller();
+    result["installed"] = DriverManager::IsUSBPcapInstalled();
+    result["installerFound"] = !DriverManager::GetUSBPcapInstallerPath().empty();
+    if (!result["ok"].get<bool>()) {
+        result["message"] = "Unable to launch USBPcap installer";
+    }
+    return result.dump();
+}
+
 std::string IpcServer::HandleEventsQuery(const std::string& /*paramsJson*/) {
     // Events are streamed in real-time; this returns an empty result
     // The Node.js layer maintains its own event buffer
@@ -477,27 +548,56 @@ std::string IpcServer::HandleDeviceReset(const std::string& paramsJson) {
 
 std::string IpcServer::EventToJson(const BHPLUS_CAPTURE_EVENT& event,
                                     const uint8_t* data, uint32_t dataLen) {
-    using bhplus::UsbTransferTypeName;
-    using bhplus::UrbFunctionName;
     json j;
+
+    const auto decoded = ParserRegistry::Instance().Decode(event, data, dataLen);
+    const std::string defaultCommand = (event.TransferType == BHPLUS_USB_TRANSFER_CONTROL &&
+        event.Detail.Control.Stage == BHPLUS_USB_CONTROL_STAGE_SETUP)
+        ? UsbStandardRequestName(event.Detail.Control.SetupPacket[1])
+        : UrbFunctionName(event.UrbFunction);
+
+    auto phaseName = [&event]() -> std::string {
+        if (event.TransferType == BHPLUS_USB_TRANSFER_CONTROL) {
+            switch (event.Detail.Control.Stage) {
+                case BHPLUS_USB_CONTROL_STAGE_SETUP:    return "SETUP";
+                case BHPLUS_USB_CONTROL_STAGE_DATA:     return "DATA";
+                case BHPLUS_USB_CONTROL_STAGE_STATUS:   return "STATUS";
+                case BHPLUS_USB_CONTROL_STAGE_COMPLETE: return "COMPLETE";
+                default:                                return "CONTROL";
+            }
+        }
+        return (event.Direction == BHPLUS_DIR_DOWN) ? "REQUEST" : "COMPLETE";
+    };
+
+    const auto statusText = (event.Status == 0)
+        ? std::string("OK")
+        : fmt::format("0x{:08X}", event.Status);
 
     // ── Common fields ──────────────────────────────────────────────────────────
     j["seq"]       = event.SequenceNumber;
     j["timestamp"] = event.Timestamp;
     j["type"]      = EventTypeName(event.EventType);
-    j["status"]    = event.Status;
+    j["status"]    = statusText;
+    j["statusCode"] = event.Status;
     j["duration"]  = event.Duration;
     j["dataLength"]= event.DataLength;
     j["direction"] = (event.Direction == BHPLUS_DIR_DOWN) ? ">>>" : "<<<";
+    j["phase"]     = phaseName();
+    j["deviceId"]  = (static_cast<uint32_t>(event.Bus) << 16) | event.Device;
 
     // ── USB identity ────────────────────────────────────────────────────────
     j["bus"]          = event.Bus;
-    j["device"]       = event.Device;
+    j["deviceAddress"] = event.Device;
+    j["device"]       = fmt::format("Bus {} Dev {}", event.Bus, event.Device);
     j["endpoint"]     = event.Endpoint;
     j["transferType"] = UsbTransferTypeName(event.TransferType);
     j["urbFunction"]  = UrbFunctionName(event.UrbFunction);
     j["irpId"]        = event.IrpId;
-    j["protocol"]     = "USB";
+    j["protocol"]     = decoded.protocol.empty() ? "USB" : decoded.protocol;
+    j["command"]      = decoded.commandName.empty() ? defaultCommand : decoded.commandName;
+    j["summary"]      = decoded.summary.empty()
+        ? fmt::format("{} {}", UsbTransferTypeName(event.TransferType), defaultCommand)
+        : decoded.summary;
 
     // ── Transfer-type detail ─────────────────────────────────────────────────
     json details;
@@ -546,6 +646,20 @@ std::string IpcServer::EventToJson(const BHPLUS_CAPTURE_EVENT& event,
         details["dataBits"]     = event.Detail.Serial.DataBits;
     }
 
+    if (!decoded.fields.empty()) {
+        json decodedFields = json::array();
+        for (const auto& field : decoded.fields) {
+            decodedFields.push_back({
+                {"name", field.name},
+                {"value", field.value},
+                {"description", field.description},
+                {"offset", field.offset},
+                {"length", field.length}
+            });
+        }
+        j["decodedFields"] = std::move(decodedFields);
+    }
+
     if (!details.empty()) j["details"] = details;
 
     // ── Data payload ──────────────────────────────────────────────────────────
@@ -558,6 +672,8 @@ std::string IpcServer::EventToJson(const BHPLUS_CAPTURE_EVENT& event,
 
 std::string IpcServer::DeviceInfoToJson(const BHPLUS_USB_DEVICE_INFO& device) {
     json j;
+    j["id"]      = (static_cast<uint32_t>(device.Bus) << 16) | device.DeviceAddress;
+    j["busType"] = "USB";
     j["bus"]     = device.Bus;
     j["device"]  = device.DeviceAddress;
     j["vid"]     = device.VendorId;

@@ -37,6 +37,21 @@ public:
     /// Check if USBPcap is installed by probing \\.\ USBPcap1..
     static bool IsUSBPcapInstalled();
 
+    /// Return how many USBPcap control interfaces are currently visible.
+    static uint32_t GetUSBPcapInterfaceCount();
+
+    /// Return true if the USBPcap service is installed.
+    static bool IsUSBPcapServiceInstalled();
+
+    /// Return true if the USBPcap service is currently running.
+    static bool IsUSBPcapDriverRunning();
+
+    /// Return true if the USB class UpperFilters contains USBPcap.
+    static bool HasUSBPcapUpperFilter();
+
+    /// Start the USBPcap kernel driver if it is installed but not running.
+    static bool StartUSBPcapDriver();
+
     /// Find the USBPcap installer bundled next to our exe.
     /// Returns empty wstring if not found.
     static std::wstring GetUSBPcapInstallerPath();
