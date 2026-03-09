@@ -1,0 +1,21 @@
+{
+  "name": "usbpcapgui",
+  "version": "0.1.0",
+  "description": "USBPcapGUI Web UI - browser-based USB protocol analyzer interface",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --dev",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "open": "^10.1.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "private": true
+}

@@ -1,41 +1,41 @@
-# Prerequisites
-*.d
+# Build outputs
+build/
+out/
+x64/
+Debug/
+Release/
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.opendb
+*.db
+
+# Compiled
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
+*.o
+*.lib
+*.dll
+*.exe
+*.sys
+*.pdb
+*.exp
 *.ilk
 
-# Debugger Files
-*.pdb
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# Driver build artifacts
+*.cat
+*.cer
+*.pfx
 
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+# Package managers
+vcpkg_installed/
+gui/node_modules/

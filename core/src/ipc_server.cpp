@@ -1,0 +1,584 @@
+/*
+ * USBPcapGUI - JSON-RPC IPC Server
+ * Named Pipe server for Node.js GUI backend communication.
+ * Protocol: newline-delimited JSON-RPC 2.0 over \\.\pipe\bhplus-core
+ */
+#define NOMINMAX   // prevent windows.h min/max macros
+
+#include "ipc_server.h"
+#include "capture_engine.h"
+#include "pcap_parser.h"
+
+#include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
+
+#include <sstream>
+#include <algorithm>
+#include <iomanip>
+
+using json = nlohmann::json;
+
+namespace bhplus {
+
+// ──────────── Helpers ────────────
+
+static std::string WideToUtf8(const wchar_t* wstr, size_t maxLen = 0) {
+    if (!wstr) return "";
+    int len = maxLen > 0
+        ? static_cast<int>(wcsnlen(wstr, maxLen))
+        : static_cast<int>(wcslen(wstr));
+    if (len == 0) return "";
+    int sz = WideCharToMultiByte(CP_UTF8, 0, wstr, len, nullptr, 0, nullptr, nullptr);
+    std::string out(sz, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr, len, out.data(), sz, nullptr, nullptr);
+    return out;
+}
+
+static std::string BytesToHex(const uint8_t* data, uint32_t len) {
+    if (!data || len == 0) return "";
+    std::ostringstream oss;
+    for (uint32_t i = 0; i < len; ++i) {
+        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
+    }
+    return oss.str();
+}
+
+static const char* EventTypeName(BHPLUS_EVENT_TYPE type) {
+    switch (type) {
+        case BHPLUS_EVENT_URB_DOWN:   return "URB_DOWN";
+        case BHPLUS_EVENT_URB_UP:     return "URB_UP";
+        case BHPLUS_EVENT_NVME_ADMIN: return "NVMe_Admin";
+        case BHPLUS_EVENT_NVME_IO:    return "NVMe_IO";
+        case BHPLUS_EVENT_SCSI_CDB:   return "SCSI_CDB";
+        case BHPLUS_EVENT_ATA_CMD:    return "ATA_CMD";
+        case BHPLUS_EVENT_SERIAL_TX:  return "Serial_TX";
+        case BHPLUS_EVENT_SERIAL_RX:  return "Serial_RX";
+        default:                      return "Unknown";
+    }
+}
+
+static const char* BusTypeName(uint32_t busType) {
+    switch (static_cast<BHPLUS_BUS_TYPE>(busType)) {
+        case BHPLUS_BUS_USB:       return "USB";
+        case BHPLUS_BUS_NVME:      return "NVMe";
+        case BHPLUS_BUS_SATA:      return "SATA";
+        case BHPLUS_BUS_SCSI:      return "SCSI";
+        case BHPLUS_BUS_SERIAL:    return "Serial";
+        case BHPLUS_BUS_BLUETOOTH: return "Bluetooth";
+        case BHPLUS_BUS_FIREWIRE:  return "FireWire";
+        default:                   return "Unknown";
+    }
+}
+
+// ──────────── Constructor / Destructor ────────────
+
+IpcServer::IpcServer() {
+    m_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+}
+
+IpcServer::~IpcServer() {
+    Stop();
+    if (m_stopEvent) {
+        CloseHandle(m_stopEvent);
+        m_stopEvent = nullptr;
+    }
+}
+
+void IpcServer::SetCaptureEngine(CaptureEngine* engine) {
+    m_engine = engine;
+}
+
+// ──────────── Start / Stop ────────────
+
+bool IpcServer::Start() {
+    if (m_running) return true;
+
+    ResetEvent(m_stopEvent);
+    m_running = true;
+
+    m_acceptThread = std::thread([this]() { AcceptThread(); });
+
+    spdlog::info("IPC server started on pipe: bhplus-core");
+    return true;
+}
+
+void IpcServer::Stop() {
+    if (!m_running) return;
+    m_running = false;
+    SetEvent(m_stopEvent);
+
+    // Disconnect all clients
+    {
+        std::lock_guard<std::mutex> lock(m_clientsMutex);
+        for (auto& ctx : m_clients) {
+            DisconnectClient(ctx.get());
+        }
+    }
+
+    if (m_acceptThread.joinable()) m_acceptThread.join();
+
+    // Join client threads
+    {
+        std::lock_guard<std::mutex> lock(m_clientsMutex);
+        for (auto& ctx : m_clients) {
+            if (ctx->readThread.joinable()) ctx->readThread.join();
+        }
+        m_clients.clear();
+    }
+
+    spdlog::info("IPC server stopped");
+}
+
+bool IpcServer::IsRunning() const {
+    return m_running;
+}
+
+// ──────────── Accept Thread ────────────
+
+void IpcServer::AcceptThread() {
+    spdlog::debug("IPC accept thread started");
+
+    while (m_running) {
+        // Create a new pipe instance (overlapped)
+        HANDLE hPipe = CreateNamedPipeW(
+            PIPE_NAME,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            MAX_CLIENTS,
+            PIPE_BUFFER_SIZE,
+            PIPE_BUFFER_SIZE,
+            0,
+            nullptr
+        );
+
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            spdlog::error("CreateNamedPipe failed: {}", GetLastError());
+            Sleep(1000);
+            continue;
+        }
+
+        // Wait for a client to connect (overlapped)
+        OVERLAPPED ov{};
+        ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+        BOOL connected = ConnectNamedPipe(hPipe, &ov);
+        if (!connected) {
+            DWORD err = GetLastError();
+            if (err == ERROR_IO_PENDING) {
+                // Wait for connection or stop
+                HANDLE waitHandles[] = { ov.hEvent, m_stopEvent };
+                DWORD waitResult = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+                if (waitResult == WAIT_OBJECT_0 + 1) {
+                    // Stop requested
+                    CancelIo(hPipe);
+                    CloseHandle(ov.hEvent);
+                    CloseHandle(hPipe);
+                    break;
+                }
+                // Check if connection succeeded
+                DWORD bytesTransferred = 0;
+                if (!GetOverlappedResult(hPipe, &ov, &bytesTransferred, FALSE)) {
+                    CloseHandle(ov.hEvent);
+                    CloseHandle(hPipe);
+                    continue;
+                }
+            } else if (err != ERROR_PIPE_CONNECTED) {
+                spdlog::error("ConnectNamedPipe failed: {}", err);
+                CloseHandle(ov.hEvent);
+                CloseHandle(hPipe);
+                continue;
+            }
+        }
+
+        CloseHandle(ov.hEvent);
+
+        // New client connected
+        spdlog::info("IPC client connected");
+
+        auto ctx = std::make_unique<ClientContext>();
+        ctx->pipeHandle = hPipe;
+        ctx->connected = true;
+
+        ClientContext* rawCtx = ctx.get();
+        ctx->readThread = std::thread([this, rawCtx]() { ClientReadLoop(rawCtx); });
+
+        {
+            std::lock_guard<std::mutex> lock(m_clientsMutex);
+            m_clients.push_back(std::move(ctx));
+        }
+    }
+
+    spdlog::debug("IPC accept thread exiting");
+}
+
+// ──────────── Client Read Loop ────────────
+
+void IpcServer::ClientReadLoop(ClientContext* ctx) {
+    std::string buffer;
+    char readBuf[4096];
+
+    while (m_running && ctx->connected) {
+        OVERLAPPED ov{};
+        ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+        DWORD bytesRead = 0;
+        BOOL readOk = ReadFile(ctx->pipeHandle, readBuf, sizeof(readBuf), &bytesRead, &ov);
+
+        if (!readOk) {
+            DWORD err = GetLastError();
+            if (err == ERROR_IO_PENDING) {
+                HANDLE waitHandles[] = { ov.hEvent, m_stopEvent };
+                DWORD waitResult = WaitForMultipleObjects(2, waitHandles, FALSE, 5000);
+                if (waitResult == WAIT_OBJECT_0 + 1 || waitResult == WAIT_TIMEOUT) {
+                    CancelIo(ctx->pipeHandle);
+                    CloseHandle(ov.hEvent);
+                    if (waitResult == WAIT_OBJECT_0 + 1) break;
+                    continue;
+                }
+                if (!GetOverlappedResult(ctx->pipeHandle, &ov, &bytesRead, FALSE)) {
+                    CloseHandle(ov.hEvent);
+                    break;  // Pipe broken
+                }
+            } else {
+                CloseHandle(ov.hEvent);
+                break;  // Pipe broken
+            }
+        }
+
+        CloseHandle(ov.hEvent);
+
+        if (bytesRead == 0) continue;
+
+        buffer.append(readBuf, bytesRead);
+
+        // Process newline-delimited JSON messages
+        size_t pos;
+        while ((pos = buffer.find('\n')) != std::string::npos) {
+            std::string line = buffer.substr(0, pos);
+            buffer.erase(0, pos + 1);
+
+            if (!line.empty()) {
+                HandleRequest(ctx, line);
+            }
+        }
+    }
+
+    DisconnectClient(ctx);
+    spdlog::info("IPC client disconnected");
+}
+
+// ──────────── Request Handling ────────────
+
+void IpcServer::HandleRequest(ClientContext* ctx, const std::string& requestJson) {
+    try {
+        auto req = json::parse(requestJson);
+
+        // JSON-RPC 2.0: { "jsonrpc": "2.0", "method": "...", "params": {...}, "id": ... }
+        std::string method = req.value("method", "");
+        std::string paramsStr = req.contains("params") ? req["params"].dump() : "{}";
+        auto id = req.value("id", json(nullptr));
+
+        std::string result;
+
+        if (method == "capture.start") {
+            result = HandleCaptureStart(paramsStr);
+        } else if (method == "capture.stop") {
+            result = HandleCaptureStop(paramsStr);
+        } else if (method == "capture.status" || method == "stats.get") {
+            result = HandleCaptureStatus(paramsStr);
+        } else if (method == "devices.list" || method == "devices.enumerate") {
+            result = HandleDevicesList(paramsStr);
+        } else if (method == "events.query") {
+            result = HandleEventsQuery(paramsStr);
+        } else if (method == "device.reset") {
+            result = HandleDeviceReset(paramsStr);
+        } else {
+            // Unknown method
+            json resp;
+            resp["jsonrpc"] = "2.0";
+            resp["id"] = id;
+            resp["error"] = { {"code", -32601}, {"message", "Method not found: " + method} };
+            SendResponse(ctx, resp.dump() + "\n");
+            return;
+        }
+
+        // Wrap in JSON-RPC response
+        json resp;
+        resp["jsonrpc"] = "2.0";
+        resp["id"] = id;
+        resp["result"] = json::parse(result);
+        SendResponse(ctx, resp.dump() + "\n");
+
+    } catch (const std::exception& ex) {
+        spdlog::error("IPC request parse error: {}", ex.what());
+        json resp;
+        resp["jsonrpc"] = "2.0";
+        resp["id"] = nullptr;
+        resp["error"] = { {"code", -32700}, {"message", "Parse error"} };
+        SendResponse(ctx, resp.dump() + "\n");
+    }
+}
+
+void IpcServer::SendResponse(ClientContext* ctx, const std::string& responseJson) {
+    if (!ctx || !ctx->connected) return;
+
+    std::lock_guard<std::mutex> lock(ctx->writeMutex);
+    DWORD written = 0;
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+    WriteFile(ctx->pipeHandle, responseJson.data(),
+              static_cast<DWORD>(responseJson.size()), &written, &ov);
+
+    DWORD err = GetLastError();
+    if (err == ERROR_IO_PENDING) {
+        WaitForSingleObject(ov.hEvent, 5000);
+        GetOverlappedResult(ctx->pipeHandle, &ov, &written, FALSE);
+    }
+    CloseHandle(ov.hEvent);
+}
+
+void IpcServer::SendToAll(const std::string& jsonMsg) {
+    std::lock_guard<std::mutex> lock(m_clientsMutex);
+    for (auto& ctx : m_clients) {
+        if (ctx->connected) {
+            SendResponse(ctx.get(), jsonMsg);
+        }
+    }
+}
+
+void IpcServer::DisconnectClient(ClientContext* ctx) {
+    if (!ctx) return;
+    ctx->connected = false;
+    if (ctx->pipeHandle != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(ctx->pipeHandle);
+        CloseHandle(ctx->pipeHandle);
+        ctx->pipeHandle = INVALID_HANDLE_VALUE;
+    }
+}
+
+// ──────────── Broadcast ────────────
+
+void IpcServer::BroadcastEvent(const BHPLUS_CAPTURE_EVENT& event, const uint8_t* data, uint32_t dataLen) {
+    if (!m_running) return;
+
+    std::string eventJson = EventToJson(event, data, dataLen);
+
+    json notification;
+    notification["jsonrpc"] = "2.0";
+    notification["method"] = "capture.event";
+    notification["params"] = json::parse(eventJson);
+
+    SendToAll(notification.dump() + "\n");
+}
+
+void IpcServer::BroadcastNotification(const std::string& method, const std::string& paramsJson) {
+    if (!m_running) return;
+
+    json notification;
+    notification["jsonrpc"] = "2.0";
+    notification["method"] = method;
+    notification["params"] = json::parse(paramsJson);
+
+    SendToAll(notification.dump() + "\n");
+}
+
+// ──────────── Method Handlers ────────────
+
+std::string IpcServer::HandleCaptureStart(const std::string& paramsJson) {
+    if (!m_engine) return R"({"ok": false, "error": "No capture engine"})";
+
+    auto params = json::parse(paramsJson);
+
+    BHPLUS_CAPTURE_CONFIG config{};
+    config.MaxEvents       = params.value("maxEvents", 100000u);
+    config.SnapshotLength  = params.value("maxDataPerEvent", 4096u);
+    config.CaptureData     = params.value("captureData", true) ? 1 : 0;
+
+    // Device filter
+    if (params.contains("deviceIds") && params["deviceIds"].is_array()) {
+        config.FilterDeviceCount = std::min<uint32_t>(
+            static_cast<uint32_t>(params["deviceIds"].size()),
+            BHPLUS_MAX_FILTER_DEVICES
+        );
+        for (uint32_t i = 0; i < config.FilterDeviceCount; ++i) {
+            config.FilterDeviceAddresses[i] = static_cast<UINT16>(
+                params["deviceIds"][i].get<uint32_t>());
+        }
+    }
+
+    bool ok = m_engine->StartCapture(config);
+
+    if (ok) {
+        BroadcastNotification("capture.started", "{}");
+    }
+
+    json result;
+    result["ok"] = ok;
+    return result.dump();
+}
+
+std::string IpcServer::HandleCaptureStop(const std::string& /*paramsJson*/) {
+    if (!m_engine) return R"({"ok": false, "error": "No capture engine"})";
+
+    bool ok = m_engine->StopCapture();
+
+    if (ok) {
+        BroadcastNotification("capture.stopped", "{}");
+    }
+
+    json result;
+    result["ok"] = ok;
+    return result.dump();
+}
+
+std::string IpcServer::HandleCaptureStatus(const std::string& /*paramsJson*/) {
+    json result;
+    if (m_engine) {
+        result["capturing"] = m_engine->IsCapturing();
+        result["driverLoaded"] = m_engine->IsDriverLoaded();
+        result["stats"] = json::parse(StatsToJson(m_engine->GetStatistics()));
+    } else {
+        result["capturing"] = false;
+        result["driverLoaded"] = false;
+    }
+    return result.dump();
+}
+
+std::string IpcServer::HandleDevicesList(const std::string& /*paramsJson*/) {
+    json result = json::array();
+
+    if (m_engine) {
+        auto devices = m_engine->EnumerateDevices();
+        for (const auto& dev : devices) {
+            result.push_back(json::parse(DeviceInfoToJson(dev)));
+        }
+    }
+
+    return result.dump();
+}
+
+std::string IpcServer::HandleEventsQuery(const std::string& /*paramsJson*/) {
+    // Events are streamed in real-time; this returns an empty result
+    // The Node.js layer maintains its own event buffer
+    return "[]";
+}
+
+std::string IpcServer::HandleDeviceReset(const std::string& paramsJson) {
+    if (!m_engine) return R"({"ok": false, "error": "No capture engine"})";
+
+    // Device reset is not implemented in the USBPcap-based engine.
+    // Return a stub success response.
+    (void)paramsJson;
+    return R"({"ok": true, "note": "reset not supported"})";    
+}
+
+// ──────────── JSON Serialization ────────────
+
+std::string IpcServer::EventToJson(const BHPLUS_CAPTURE_EVENT& event,
+                                    const uint8_t* data, uint32_t dataLen) {
+    using bhplus::UsbTransferTypeName;
+    using bhplus::UrbFunctionName;
+    json j;
+
+    // ── Common fields ──────────────────────────────────────────────────────────
+    j["seq"]       = event.SequenceNumber;
+    j["timestamp"] = event.Timestamp;
+    j["type"]      = EventTypeName(event.EventType);
+    j["status"]    = event.Status;
+    j["duration"]  = event.Duration;
+    j["dataLength"]= event.DataLength;
+    j["direction"] = (event.Direction == BHPLUS_DIR_DOWN) ? ">>>" : "<<<";
+
+    // ── USB identity ────────────────────────────────────────────────────────
+    j["bus"]          = event.Bus;
+    j["device"]       = event.Device;
+    j["endpoint"]     = event.Endpoint;
+    j["transferType"] = UsbTransferTypeName(event.TransferType);
+    j["urbFunction"]  = UrbFunctionName(event.UrbFunction);
+    j["irpId"]        = event.IrpId;
+    j["protocol"]     = "USB";
+
+    // ── Transfer-type detail ─────────────────────────────────────────────────
+    json details;
+    switch (event.TransferType) {
+        case BHPLUS_USB_TRANSFER_CONTROL:
+            details["stage"] = event.Detail.Control.Stage;
+            if (event.Detail.Control.Stage == BHPLUS_USB_CONTROL_STAGE_SETUP) {
+                details["setupPacket"] = BytesToHex(
+                    event.Detail.Control.SetupPacket, 8);
+            }
+            break;
+
+        case BHPLUS_USB_TRANSFER_ISOCHRONOUS:
+            details["startFrame"]   = event.Detail.Isoch.StartFrame;
+            details["numPackets"]   = event.Detail.Isoch.NumberOfPackets;
+            details["errorCount"]   = event.Detail.Isoch.ErrorCount;
+            break;
+
+        case BHPLUS_USB_TRANSFER_BULK:
+        case BHPLUS_USB_TRANSFER_INTERRUPT:
+        default:
+            break; // no extra fields
+    }
+
+    // Phase-3 storage / serial details (populated when Source == DRIVER)
+    if (event.EventType == BHPLUS_EVENT_NVME_ADMIN ||
+        event.EventType == BHPLUS_EVENT_NVME_IO) {
+        j["protocol"]           = "NVMe";
+        details["opcode"]       = event.Detail.Nvme.Opcode;
+        details["nsid"]         = event.Detail.Nvme.NSID;
+    } else if (event.EventType == BHPLUS_EVENT_SCSI_CDB) {
+        j["protocol"]           = "SCSI";
+        details["cdb"]          = BytesToHex(event.Detail.Scsi.Cdb,
+                                             event.Detail.Scsi.CdbLength);
+        details["cdbLength"]    = event.Detail.Scsi.CdbLength;
+        details["scsiStatus"]   = event.Detail.Scsi.ScsiStatus;
+    } else if (event.EventType == BHPLUS_EVENT_ATA_CMD) {
+        j["protocol"]           = "ATA";
+        details["command"]      = event.Detail.Ata.Command;
+        details["lba"]          = event.Detail.Ata.Lba;
+        details["sectorCount"]  = event.Detail.Ata.SectorCount;
+    } else if (event.EventType == BHPLUS_EVENT_SERIAL_TX ||
+               event.EventType == BHPLUS_EVENT_SERIAL_RX) {
+        j["protocol"]           = "Serial";
+        details["baudRate"]     = event.Detail.Serial.BaudRate;
+        details["dataBits"]     = event.Detail.Serial.DataBits;
+    }
+
+    if (!details.empty()) j["details"] = details;
+
+    // ── Data payload ──────────────────────────────────────────────────────────
+    if (data && dataLen > 0) {
+        j["data"] = BytesToHex(data, std::min(dataLen, 4096u));
+    }
+
+    return j.dump();
+}
+
+std::string IpcServer::DeviceInfoToJson(const BHPLUS_USB_DEVICE_INFO& device) {
+    json j;
+    j["bus"]     = device.Bus;
+    j["device"]  = device.DeviceAddress;
+    j["vid"]     = device.VendorId;
+    j["pid"]     = device.ProductId;
+    j["class"]   = device.DeviceClass;
+    j["speed"]   = device.Speed;
+    j["isHub"]   = device.IsHub;
+    j["name"]    = WideToUtf8(device.DeviceName, BHPLUS_MAX_DEVICE_NAME);
+    j["serial"]  = WideToUtf8(device.SerialNumber, 64);
+    return j.dump();
+}
+
+std::string IpcServer::StatsToJson(const BHPLUS_STATS& stats) {
+    json j;
+    j["totalEvents"]      = stats.TotalEventsCaptured;
+    j["totalBytes"]       = stats.TotalBytesCaptured;
+    j["eventsDropped"]    = stats.EventsDropped;
+    j["uptimeMs"]         = stats.UptimeMs;
+    j["activeDeviceCount"]= stats.ActiveDeviceCount;
+    j["activeRootHubs"]   = stats.ActiveRootHubs;
+    return j.dump();
+}
+
+} // namespace bhplus

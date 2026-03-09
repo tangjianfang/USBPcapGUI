@@ -1,0 +1,62 @@
+;
+; USBPcapGUI - KMDF Filter Driver INF
+;
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+CatalogFile = bhplus.cat
+DriverVer   = 03/08/2026,0.1.0.0
+PnpLockDown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+bhplus.sys = 1,,
+
+; =================== Device Install ===================
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+[Standard.NTamd64]
+%bhplus.DeviceDesc% = bhplus_Device, Root\BHPlus
+
+[bhplus_Device.NT]
+CopyFiles = bhplus_Device.NT.Copy
+
+[bhplus_Device.NT.Copy]
+bhplus.sys
+
+[bhplus_Device.NT.Services]
+AddService = bhplus,%SPSVCINST_ASSOCSERVICE%,bhplus_Service_Install
+
+[bhplus_Service_Install]
+DisplayName    = %bhplus.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\bhplus.sys
+
+; =================== WDF ===================
+
+[bhplus_Device.NT.Wdf]
+KmdfService = bhplus, bhplus_wdfsect
+
+[bhplus_wdfsect]
+KmdfLibraryVersion = 1.33
+
+; =================== Strings ===================
+
+[Strings]
+SPSVCINST_ASSOCSERVICE = 0x00000002
+ManufacturerName       = "USBPcapGUI"
+DiskName               = "USBPcapGUI Installation Disk"
+bhplus.DeviceDesc      = "USBPcapGUI Filter Driver"
+bhplus.SVCDESC         = "USBPcapGUI Filter Driver Service"

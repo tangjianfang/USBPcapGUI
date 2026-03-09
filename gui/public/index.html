@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USBPcapGUI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Top Toolbar -->
+    <header id="toolbar">
+        <div class="toolbar-left">
+            <h1 class="app-title">USBPcapGUI</h1>
+            <button id="btn-start" class="btn btn-success" title="Start Capture (F5)">▶ Start</button>
+            <button id="btn-stop" class="btn btn-danger" disabled title="Stop Capture (F6)">■ Stop</button>
+            <span class="toolbar-sep"></span>
+            <button id="btn-clear" class="btn" title="Clear (Ctrl+L)">✕ Clear</button>
+            <button id="btn-export" class="btn" title="Export (Ctrl+E)">⬇ Export</button>
+        </div>
+        <div class="toolbar-right">
+            <span id="status-badge" class="badge badge-info">DEMO</span>
+            <span id="event-count">Events: 0</span>
+            <span id="dropped-count">Dropped: 0</span>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <div id="main-layout">
+        <!-- Left: Device Tree -->
+        <aside id="device-panel" class="panel">
+            <div class="panel-header">
+                <span>Devices</span>
+                <button id="btn-refresh-devices" class="btn btn-sm" title="Refresh">⟳</button>
+            </div>
+            <div id="device-tree" class="panel-body"></div>
+        </aside>
+
+        <!-- Resize Handle -->
+        <div class="resize-handle resize-h" data-left="device-panel" data-right="center-panel"></div>
+
+        <!-- Center: Capture Table + Detail -->
+        <div id="center-panel">
+            <!-- Filter Bar -->
+            <div id="filter-bar">
+                <input type="text" id="filter-input" placeholder="Filter: protocol:USB command:GET_DESCRIPTOR status:!STALL data:ff01..." spellcheck="false">
+                <button id="btn-filter-apply" class="btn btn-sm">Apply</button>
+                <button id="btn-filter-clear" class="btn btn-sm">Clear</button>
+                <span id="filter-count"></span>
+            </div>
+
+            <!-- Capture Table -->
+            <div id="capture-table-container" class="panel">
+                <table id="capture-table">
+                    <thead>
+                        <tr>
+                            <th class="col-seq" data-sort="seq">#</th>
+                            <th class="col-time" data-sort="timestamp">Time</th>
+                            <th class="col-dir" data-sort="direction">Dir</th>
+                            <th class="col-device" data-sort="device">Device</th>
+                            <th class="col-proto" data-sort="protocol">Protocol</th>
+                            <th class="col-command" data-sort="command">Command</th>
+                            <th class="col-status" data-sort="status">Status</th>
+                            <th class="col-len" data-sort="dataLength">Len</th>
+                        </tr>
+                    </thead>
+                </table>
+                <div id="capture-table-body" class="virtual-scroll-container">
+                    <div id="capture-rows"></div>
+                </div>
+            </div>
+
+            <!-- Resize Handle (vertical) -->
+            <div class="resize-handle resize-v" data-top="capture-table-container" data-bottom="detail-panel"></div>
+
+            <!-- Detail Panel -->
+            <div id="detail-panel" class="panel">
+                <div class="tab-bar">
+                    <button class="tab active" data-tab="hex-tab">Hex View</button>
+                    <button class="tab" data-tab="decode-tab">Protocol Decode</button>
+                </div>
+                <div id="hex-tab" class="tab-content active">
+                    <pre id="hex-view" class="hex-view"></pre>
+                </div>
+                <div id="decode-tab" class="tab-content">
+                    <table id="decode-table" class="decode-table">
+                        <thead><tr><th>Field</th><th>Value</th><th>Description</th></tr></thead>
+                        <tbody id="decode-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Dialog -->
+    <dialog id="export-dialog">
+        <h3>Export Capture Data</h3>
+        <div class="dialog-body">
+            <label>Format:
+                <select id="export-format">
+                    <option value="json">JSON</option>
+                    <option value="csv">CSV</option>
+                    <option value="txt">Text</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="export-filtered"> Export filtered data only</label>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn btn-success" id="btn-export-ok">Export</button>
+            <button class="btn" id="btn-export-cancel">Cancel</button>
+        </div>
+    </dialog>
+
+    <!-- Scripts (vanilla JS, no framework) -->
+    <script src="js/websocket.js"></script>
+    <script src="js/hexview.js"></script>
+    <script src="js/filter.js"></script>
+    <script src="js/capture.js"></script>
+    <script src="js/devicetree.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
