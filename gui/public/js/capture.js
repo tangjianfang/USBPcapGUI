@@ -37,7 +37,7 @@ const CaptureTable = {
     init() {
         this._container = document.getElementById('capture-table-body');
         this._statusCount = document.getElementById('event-count');
-        this._statusFiltered = document.getElementById('filtered-count');
+        this._statusFiltered = document.getElementById('filter-count');
 
         // Create virtual scroll structure
         this._viewport = document.createElement('div');
@@ -350,23 +350,27 @@ const CaptureTable = {
 
     _formatTime(ts) {
         if (!ts) return '';
-        if (typeof ts === 'number') {
-            const d = new Date(ts);
-            return d.toISOString().substring(11, 23); // HH:MM:SS.mmm
+        if (typeof ts === 'number' && Number.isFinite(ts)) {
+            const isMicroseconds = ts > 10_000_000_000_000;
+            const millis = isMicroseconds ? Math.floor(ts / 1000) : ts;
+            const d = new Date(millis);
+            if (Number.isNaN(d.getTime())) return String(ts);
+            const base = d.toISOString().substring(11, 23);
+            if (!isMicroseconds) return base;
+            return `${base}${String(ts % 1000).padStart(3, '0')}`;
         }
         return String(ts);
     },
 
     _updateStatus() {
         if (this._statusCount) {
-            this._statusCount.textContent = this.allEvents.length;
+            this._statusCount.textContent = `Events: ${this.allEvents.length}`;
         }
         if (this._statusFiltered) {
             if (this.filterConditions.length > 0) {
-                this._statusFiltered.textContent = `(${this.filteredEvents.length} shown)`;
-                this._statusFiltered.style.display = '';
+                this._statusFiltered.textContent = `Filtered: ${this.filteredEvents.length} / ${this.allEvents.length}`;
             } else {
-                this._statusFiltered.style.display = 'none';
+                this._statusFiltered.textContent = '';
             }
         }
     },

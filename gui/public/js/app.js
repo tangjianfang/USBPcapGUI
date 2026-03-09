@@ -425,15 +425,32 @@ const App = {
 
     _doExport() {
         const formatEl = document.getElementById('export-format');
+        const filteredEl = document.getElementById('export-filtered');
+        const filterInput = document.getElementById('filter-input');
         const format = formatEl ? formatEl.value : 'json';
+        const exportFiltered = !!(filteredEl && filteredEl.checked);
+        const filterText = exportFiltered && filterInput ? filterInput.value.trim() : '';
 
-        window.bhWs.send('export', { format });
+        window.bhWs.send('export', {
+            format,
+            filtered: exportFiltered,
+            filterText
+        });
         this.hideExportDialog();
     },
 
     _downloadExport(data) {
         if (!data || !data.content) return;
-        const blob = new Blob([data.content], { type: data.mimeType || data.mime || 'application/octet-stream' });
+        let blobContent = data.content;
+        if (data.encoding === 'base64') {
+            const binary = atob(data.content);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            blobContent = bytes;
+        }
+        const blob = new Blob([blobContent], { type: data.mimeType || data.mime || 'application/octet-stream' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -548,7 +565,16 @@ const App = {
 
     _formatTimestamp(ts) {
         if (!ts) return '';
-        const d = new Date(typeof ts === 'number' ? ts : Date.parse(ts));
+        if (typeof ts === 'number' && Number.isFinite(ts)) {
+            const isMicroseconds = ts > 10_000_000_000_000;
+            const millis = isMicroseconds ? Math.floor(ts / 1000) : ts;
+            const d = new Date(millis);
+            if (Number.isNaN(d.getTime())) return String(ts);
+            const time = d.toLocaleTimeString('en-US', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+            return isMicroseconds ? `${time}${String(ts % 1000).padStart(3, '0')}` : time;
+        }
+        const d = new Date(Date.parse(ts));
+        if (Number.isNaN(d.getTime())) return String(ts);
         return d.toLocaleTimeString('en-US', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
     },
 
