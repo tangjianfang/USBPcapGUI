@@ -110,11 +110,8 @@ async function handleWsMessage(ws, msg) {
         }
         case 'events.query': {
             // Query events with filter
-            const { offset = 0, limit = 1000, filter } = msg.data || {};
-            let filtered = captureEvents;
-            if (filter) {
-                filtered = applyFilter(captureEvents, filter);
-            }
+            const { offset = 0, limit = 1000, filter, filterText } = msg.data || {};
+            const filtered = applyRequestedFilter(captureEvents, filter, filterText);
             const slice = filtered.slice(offset, offset + limit);
             ws.send(JSON.stringify({
                 type: 'events.result',
@@ -123,9 +120,8 @@ async function handleWsMessage(ws, msg) {
             break;
         }
         case 'export': {
-            const { format = 'json', filter } = msg.data || {};
-            let data = captureEvents;
-            if (filter) data = applyFilter(captureEvents, filter);
+            const { format = 'json', filter, filterText, filtered = false } = msg.data || {};
+            const data = filtered ? applyRequestedFilter(captureEvents, filter, filterText) : captureEvents;
             const exported = exportData(data, format);
             ws.send(JSON.stringify({ type: 'export.result', data: exported }));
             break;
@@ -179,24 +175,276 @@ function applyFilter(events, filter) {
     });
 }
 
+function parseFilterText(filterText) {
+    if (!filterText || !filterText.trim()) return [];
+
+    const conditions = [];
+    const tokens = filterText.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+
+    for (const token of tokens) {
+        const colonIdx = token.indexOf(':');
+        if (colonIdx > 0) {
+            const key = token.substring(0, colonIdx).toLowerCase();
+            let value = token.substring(colonIdx + 1);
+            let negate = false;
+            let op = '=';
+
+            if (value.startsWith('!')) {
+                negate = true;
+                value = value.substring(1);
+            }
+            if (value.startsWith('>')) {
+                op = '>';
+                value = value.substring(1);
+            } else if (value.startsWith('<')) {
+                op = '<';
+                value = value.substring(1);
+            }
+
+            conditions.push({
+                key,
+                value: value.replace(/^"|"$/g, ''),
+                negate,
+                op
+            });
+        } else {
+            conditions.push({
+                key: '_text',
+                value: token.replace(/^"|"$/g, ''),
+                negate: false,
+                op: '='
+            });
+        }
+    }
+
+    return conditions;
+}
+
+function applyTextFilter(events, filterText) {
+    const conditions = parseFilterText(filterText);
+    if (!conditions.length) return events;
+
+    return events.filter(event => conditions.every(cond => {
+        let match = true;
+
+        switch (cond.key) {
+            case 'protocol':
+            case 'proto':
+                match = matchString(event.protocol, cond.value);
+                break;
+            case 'device':
+                match = matchString(event.device, cond.value);
+                break;
+            case 'command':
+            case 'cmd':
+                match = matchString(event.command, cond.value);
+                break;
+            case 'status':
+                match = matchString(event.status, cond.value);
+                break;
+            case 'phase':
+                match = matchString(event.phase, cond.value);
+                break;
+            case 'dir':
+            case 'direction':
+                match = matchDirection(event.direction, cond.value);
+                break;
+            case 'len':
+            case 'length':
+                match = matchNumber(event.dataLength, cond.value, cond.op);
+                break;
+            case 'deviceid':
+                match = matchNumber(event.deviceId, cond.value, cond.op);
+                break;
+            case 'seq':
+                match = matchNumber(event.seq, cond.value, cond.op);
+                break;
+            case 'endpoint':
+            case 'ep':
+                match = matchNumber(event.endpoint, cond.value, cond.op);
+                break;
+            case 'data':
+                match = matchString(event.data, cond.value);
+                break;
+            case '_text':
+                match = [event.protocol, event.device, event.command, event.status, event.phase, event.data]
+                    .some(value => matchString(value, cond.value));
+                break;
+            default:
+                match = true;
+                break;
+        }
+
+        return cond.negate ? !match : match;
+    }));
+}
+
+function applyRequestedFilter(events, filter, filterText) {
+    let filtered = events;
+    if (filter) {
+        filtered = applyFilter(filtered, filter);
+    }
+    if (filterText) {
+        filtered = applyTextFilter(filtered, filterText);
+    }
+    return filtered;
+}
+
+function matchString(value, pattern) {
+    if (!value && value !== 0) return false;
+    const text = String(value);
+    try {
+        return new RegExp(pattern, 'i').test(text);
+    } catch {
+        return text.toLowerCase().includes(String(pattern).toLowerCase());
+    }
+}
+
+function matchDirection(value, pattern) {
+    const normalized = String(pattern).toLowerCase();
+    if (normalized === 'in' || normalized === '<<<') return value === '<<<';
+    if (normalized === 'out' || normalized === '>>>') return value === '>>>';
+    return matchString(value, pattern);
+}
+
+function matchNumber(value, raw, op) {
+    const actual = Number(value);
+    const expected = Number(raw);
+    if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
+    if (op === '>') return actual > expected;
+    if (op === '<') return actual < expected;
+    return actual === expected;
+}
+
+function formatTimestamp(timestamp) {
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
+        return String(timestamp || '');
+    }
+    const isMicroseconds = timestamp > 10_000_000_000_000;
+    const millis = isMicroseconds ? Math.floor(timestamp / 1000) : timestamp;
+    const date = new Date(millis);
+    if (Number.isNaN(date.getTime())) {
+        return String(timestamp);
+    }
+    const base = date.toISOString();
+    if (!isMicroseconds) return base;
+    return `${base.slice(0, -1)}${String(timestamp % 1000).padStart(3, '0')}Z`;
+}
+
+function hexToBuffer(hex) {
+    if (!hex) return Buffer.alloc(0);
+    const normalized = String(hex).replace(/[^0-9a-f]/gi, '');
+    if (!normalized) return Buffer.alloc(0);
+    return Buffer.from(normalized.length % 2 === 0 ? normalized : `0${normalized}`, 'hex');
+}
+
+function mapTransferType(value) {
+    const key = String(value || '').toLowerCase();
+    switch (key) {
+        case 'isochronous': return 0;
+        case 'interrupt': return 1;
+        case 'control': return 2;
+        case 'bulk': return 3;
+        default: return 3;
+    }
+}
+
+function toBigInt(value) {
+    if (typeof value === 'bigint') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return BigInt(Math.trunc(value));
+    if (typeof value === 'string' && value.trim()) {
+        try {
+            return BigInt(value.trim());
+        } catch {
+            return 0n;
+        }
+    }
+    return 0n;
+}
+
+function buildUsbPcapPayload(event) {
+    const payload = hexToBuffer(event.data);
+    const transfer = mapTransferType(event.transferType);
+    const details = event.details || {};
+    const headerLen = transfer === 2 ? 28 : (transfer === 0 ? 39 : 27);
+    const buffer = Buffer.alloc(headerLen + payload.length);
+
+    buffer.writeUInt16LE(headerLen, 0);
+    buffer.writeBigUInt64LE(toBigInt(event.irpId), 2);
+    buffer.writeUInt32LE((event.statusCode || 0) >>> 0, 10);
+    buffer.writeUInt16LE((event.urbFunction || 0) & 0xffff, 14);
+    buffer.writeUInt8(event.direction === '<<<' ? 1 : 0, 16);
+    buffer.writeUInt16LE((event.bus || 0) & 0xffff, 17);
+    buffer.writeUInt16LE((event.deviceAddress || 0) & 0xffff, 19);
+    buffer.writeUInt8((event.endpoint || 0) & 0xff, 21);
+    buffer.writeUInt8(transfer & 0xff, 22);
+    buffer.writeUInt32LE(payload.length >>> 0, 23);
+
+    if (transfer === 2) {
+        buffer.writeUInt8((details.stage || 0) & 0xff, 27);
+    } else if (transfer === 0) {
+        buffer.writeUInt32LE((details.startFrame || 0) >>> 0, 27);
+        buffer.writeUInt32LE((details.numPackets || 0) >>> 0, 31);
+        buffer.writeUInt32LE((details.errorCount || 0) >>> 0, 35);
+    }
+
+    payload.copy(buffer, headerLen);
+    return buffer;
+}
+
+function exportPcap(events) {
+    const globalHeader = Buffer.alloc(24);
+    globalHeader.writeUInt32LE(0xa1b2c3d4, 0);
+    globalHeader.writeUInt16LE(2, 4);
+    globalHeader.writeUInt16LE(4, 6);
+    globalHeader.writeInt32LE(0, 8);
+    globalHeader.writeUInt32LE(0, 12);
+    globalHeader.writeUInt32LE(65535, 16);
+    globalHeader.writeUInt32LE(249, 20);
+
+    const records = [];
+    for (const event of events) {
+        const usbPayload = buildUsbPcapPayload(event);
+        const timestamp = Number(event.timestamp || 0);
+        const tsSec = Math.floor(timestamp / 1_000_000);
+        const tsUsec = timestamp % 1_000_000;
+        const pcapHeader = Buffer.alloc(16);
+        pcapHeader.writeUInt32LE(tsSec >>> 0, 0);
+        pcapHeader.writeUInt32LE(tsUsec >>> 0, 4);
+        pcapHeader.writeUInt32LE(usbPayload.length >>> 0, 8);
+        pcapHeader.writeUInt32LE(usbPayload.length >>> 0, 12);
+        records.push(pcapHeader, usbPayload);
+    }
+
+    const content = Buffer.concat([globalHeader, ...records]);
+    return {
+        content: content.toString('base64'),
+        encoding: 'base64',
+        filename: 'capture.pcap',
+        mime: 'application/vnd.tcpdump.pcap'
+    };
+}
+
 /**
  * Export data in various formats
  */
 function exportData(events, format) {
     switch (format) {
         case 'csv': {
-            const header = 'Seq,Time,Direction,Device,Protocol,Command,Status,Length\n';
+            const header = 'Seq,Timestamp,Direction,Device,Protocol,Phase,Command,Status,Length\n';
             const rows = events.map(e =>
-                `${e.seq},${e.timestamp},${e.direction},"${e.device}",${e.protocol},"${e.command}",${e.status},${e.dataLength}`
+                `${e.seq},${formatTimestamp(e.timestamp)},${e.direction},"${e.device}",${e.protocol},${e.phase || ''},"${e.command}",${e.status},${e.dataLength}`
             ).join('\n');
             return { content: header + rows, filename: 'capture.csv', mime: 'text/csv' };
         }
         case 'txt': {
             const lines = events.map(e =>
-                `${String(e.seq).padStart(8)}  ${new Date(e.timestamp).toISOString()}  ${e.direction}  ${e.protocol.padEnd(6)}  ${e.command.padEnd(30)}  ${e.status.padEnd(8)}  ${e.dataLength}B`
+                `${String(e.seq).padStart(8)}  ${formatTimestamp(e.timestamp)}  ${e.direction}  ${(e.protocol || '').padEnd(6)}  ${(e.command || '').padEnd(30)}  ${(e.status || '').padEnd(10)}  ${e.dataLength}B`
             ).join('\n');
             return { content: lines, filename: 'capture.txt', mime: 'text/plain' };
         }
+        case 'pcap':
+            return exportPcap(events);
         case 'json':
         default:
             return { content: JSON.stringify(events, null, 2), filename: 'capture.json', mime: 'application/json' };
@@ -245,10 +493,17 @@ app.get('/api/events', (req, res) => {
 });
 
 app.get('/api/export/:format', (req, res) => {
-    const result = exportData(captureEvents, req.params.format);
+    const filtered = req.query.filtered === '1' || req.query.filtered === 'true';
+    const filterText = typeof req.query.filterText === 'string' ? req.query.filterText : '';
+    const events = filtered ? applyRequestedFilter(captureEvents, null, filterText) : captureEvents;
+    const result = exportData(events, req.params.format);
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.setHeader('Content-Type', result.mime);
-    res.send(result.content);
+    if (result.encoding === 'base64') {
+        res.send(Buffer.from(result.content, 'base64'));
+    } else {
+        res.send(result.content);
+    }
 });
 
 // --- Core Bridge Events ---
