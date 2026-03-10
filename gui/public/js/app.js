@@ -24,6 +24,7 @@ const App = {
         this._bindDetailTabs();
         this._bindResizeHandles();
         this._bindExportDialog();
+        this._bindCommandDialog();
         this._initWebSocket();
 
         // Initial UI state
@@ -119,6 +120,26 @@ const App = {
                 }
                 break;
 
+            case 'device.reset.result':
+                this._showInfo((msg.data && msg.data.message) || '已提交设备重置请求');
+                DeviceTree.enumerate();
+                break;
+
+            case 'command.send.result':
+                if (msg.data && msg.data.ok) {
+                    const transferred = msg.data.bytesTransferred || 0;
+                    this._showInfo(`控制传输完成，传输 ${transferred} 字节`);
+                    if (msg.data.dataHex) {
+                        const hexPanel = document.getElementById('hex-view');
+                        if (hexPanel) {
+                            hexPanel.innerHTML = HexView.format(msg.data.dataHex);
+                        }
+                    }
+                } else {
+                    this._showError((msg.data && msg.data.message) || '控制传输失败');
+                }
+                break;
+
             case 'events.result':
                 // Response to a query - replace table contents
                 CaptureTable.clear();
@@ -145,6 +166,8 @@ const App = {
         document.getElementById('btn-stop').addEventListener('click', () => this.stopCapture());
         document.getElementById('btn-clear').addEventListener('click', () => this.clearCapture());
         document.getElementById('btn-export').addEventListener('click', () => this.showExportDialog());
+        document.getElementById('btn-reset-device').addEventListener('click', () => this.resetSelectedDevice());
+        document.getElementById('btn-send-command').addEventListener('click', () => this.showCommandDialog());
         document.getElementById('btn-refresh-devices').addEventListener('click', () => DeviceTree.enumerate());
 
         const autoScrollBtn = document.getElementById('btn-autoscroll');
@@ -191,6 +214,15 @@ const App = {
     clearCapture() {
         window.bhWs.send('capture.clear');
         CaptureTable.clear();
+    },
+
+    resetSelectedDevice() {
+        const selected = DeviceTree.getSelectedDevice();
+        if (!selected) {
+            this._showError('请先在左侧选择一个设备');
+            return;
+        }
+        window.bhWs.send('device.reset', { deviceId: selected.id });
     },
 
     // ---- Filter Bar ----
@@ -413,6 +445,16 @@ const App = {
         if (exportBtn) exportBtn.addEventListener('click', () => this._doExport());
     },
 
+    _bindCommandDialog() {
+        const dialog = document.getElementById('command-dialog');
+        if (!dialog) return;
+
+        const cancelBtn = document.getElementById('btn-command-cancel');
+        const sendBtn = document.getElementById('btn-command-send');
+        if (cancelBtn) cancelBtn.addEventListener('click', () => this.hideCommandDialog());
+        if (sendBtn) sendBtn.addEventListener('click', () => this._sendCommand());
+    },
+
     showExportDialog() {
         const dialog = document.getElementById('export-dialog');
         if (dialog && dialog.showModal) dialog.showModal();
@@ -421,6 +463,52 @@ const App = {
     hideExportDialog() {
         const dialog = document.getElementById('export-dialog');
         if (dialog && dialog.close) dialog.close();
+    },
+
+    showCommandDialog() {
+        const selected = DeviceTree.getSelectedDevice();
+        if (!selected) {
+            this._showError('请先在左侧选择一个设备');
+            return;
+        }
+
+        const label = document.getElementById('command-device-label');
+        if (label) {
+            label.textContent = `${selected.name || 'USB Device'} (Bus ${selected.bus || 0} Dev ${selected.device || 0})`;
+        }
+
+        const dialog = document.getElementById('command-dialog');
+        if (dialog && dialog.showModal) dialog.showModal();
+    },
+
+    hideCommandDialog() {
+        const dialog = document.getElementById('command-dialog');
+        if (dialog && dialog.close) dialog.close();
+    },
+
+    _sendCommand() {
+        const selected = DeviceTree.getSelectedDevice();
+        if (!selected) {
+            this._showError('请先选择一个设备');
+            return;
+        }
+
+        try {
+            const data = {
+                deviceId: selected.id,
+                requestType: this._parseHexField('cmd-request-type', 0xff),
+                request: this._parseHexField('cmd-request', 0xff),
+                value: this._parseHexField('cmd-value', 0xffff),
+                index: this._parseHexField('cmd-index', 0xffff),
+                length: this._parseNumberField('cmd-length'),
+                payloadHex: (document.getElementById('cmd-payload')?.value || '').trim()
+            };
+
+            window.bhWs.send('command.send', data);
+            this.hideCommandDialog();
+        } catch (e) {
+            this._showError(e.message || '命令参数无效');
+        }
     },
 
     _doExport() {
@@ -543,9 +631,16 @@ const App = {
 
     _showError(message) {
         console.error('[BHPlus]', message);
-        // Simple toast notification
+        this._showToast(message, 'toast-error');
+    },
+
+    _showInfo(message) {
+        this._showToast(message, 'toast-info');
+    },
+
+    _showToast(message, className) {
         const toast = document.createElement('div');
-        toast.className = 'toast toast-error';
+        toast.className = `toast ${className}`;
         toast.textContent = message;
         document.body.appendChild(toast);
         setTimeout(() => {
@@ -555,6 +650,24 @@ const App = {
             toast.classList.remove('show');
             setTimeout(() => toast.remove(), 300);
         }, 4000);
+    },
+
+    _parseHexField(id, maxValue) {
+        const value = (document.getElementById(id)?.value || '').trim();
+        if (!value) return 0;
+        const parsed = parseInt(value.replace(/^0x/i, ''), 16);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > maxValue) {
+            throw new Error(`字段 ${id} 不是有效的十六进制值`);
+        }
+        return parsed;
+    },
+
+    _parseNumberField(id) {
+        const value = Number(document.getElementById(id)?.value || 0);
+        if (!Number.isFinite(value) || value < 0) {
+            throw new Error(`字段 ${id} 不是有效数字`);
+        }
+        return value;
     },
 
     _esc(str) {

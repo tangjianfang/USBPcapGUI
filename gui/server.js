@@ -108,6 +108,16 @@ async function handleWsMessage(ws, msg) {
             broadcast({ type: 'usbpcap.status', data: status });
             break;
         }
+        case 'device.reset': {
+            const result = await core.request('device.reset', msg.data || {});
+            ws.send(JSON.stringify({ type: 'device.reset.result', data: result }));
+            break;
+        }
+        case 'command.send': {
+            const result = await core.request('command.send', msg.data || {});
+            ws.send(JSON.stringify({ type: 'command.send.result', data: result }));
+            break;
+        }
         case 'events.query': {
             // Query events with filter
             const { offset = 0, limit = 1000, filter, filterText } = msg.data || {};

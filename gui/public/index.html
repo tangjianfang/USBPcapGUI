@@ -16,6 +16,8 @@
             <span class="toolbar-sep"></span>
             <button id="btn-clear" class="btn" title="Clear (Ctrl+L)">✕ Clear</button>
             <button id="btn-export" class="btn" title="Export (Ctrl+E)">⬇ Export</button>
+            <button id="btn-reset-device" class="btn" title="Reset selected device">↻ Reset Device</button>
+            <button id="btn-send-command" class="btn" title="Send USB control transfer">⇢ Control</button>
         </div>
         <div class="toolbar-right">
             <span id="status-badge" class="badge badge-info">DEMO</span>
@@ -119,6 +121,35 @@
         <div class="dialog-footer">
             <button class="btn btn-success" id="btn-export-ok">Export</button>
             <button class="btn" id="btn-export-cancel">Cancel</button>
+        </div>
+    </dialog>
+
+    <dialog id="command-dialog">
+        <h3>Send USB Control Transfer</h3>
+        <div class="dialog-body command-dialog-body">
+            <div id="command-device-label" class="command-device-label">No device selected</div>
+            <label>bmRequestType (hex)
+                <input type="text" id="cmd-request-type" value="80" class="mono">
+            </label>
+            <label>bRequest (hex)
+                <input type="text" id="cmd-request" value="06" class="mono">
+            </label>
+            <label>wValue (hex)
+                <input type="text" id="cmd-value" value="0100" class="mono">
+            </label>
+            <label>wIndex (hex)
+                <input type="text" id="cmd-index" value="0000" class="mono">
+            </label>
+            <label>wLength (decimal)
+                <input type="number" id="cmd-length" value="18" min="0">
+            </label>
+            <label>Payload Hex (OUT only)
+                <textarea id="cmd-payload" rows="4" class="mono" placeholder="Optional payload for host-to-device requests"></textarea>
+            </label>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn btn-success" id="btn-command-send">Send</button>
+            <button class="btn" id="btn-command-cancel">Cancel</button>
         </div>
     </dialog>
 

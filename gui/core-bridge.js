@@ -147,6 +147,17 @@ class CoreBridge extends EventEmitter {
                     this.demoInterval = null;
                 }
                 return Promise.resolve({ success: true });
+            case 'device.reset':
+                return Promise.resolve({ ok: true, message: 'Demo mode: reset simulated' });
+            case 'command.send': {
+                const length = Number(params.length || 0);
+                return Promise.resolve({
+                    ok: true,
+                    bytesTransferred: length,
+                    dataHex: this._randomHex(length),
+                    message: 'Demo mode: control transfer simulated'
+                });
+            }
             case 'stats.get':
             case 'capture.status':
                 return Promise.resolve({

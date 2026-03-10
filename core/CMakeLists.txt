@@ -7,6 +7,7 @@ add_library(bhplus_core STATIC
     src/capture_engine.cpp
     src/pcap_parser.cpp
     src/usbpcap_reader.cpp
+    src/usb_actions.cpp
     src/device_enumerator.cpp
     src/filter_engine.cpp
     src/trigger_engine.cpp
@@ -32,6 +33,7 @@ target_link_libraries(bhplus_core PUBLIC
     setupapi
     cfgmgr32
     shell32
+    winusb
 )
 
 # Disable fmt consteval on MSVC (known compatibility issue with fmt 12+)

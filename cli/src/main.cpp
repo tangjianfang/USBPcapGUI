@@ -5,15 +5,19 @@
 #define NOMINMAX
 
 #include "capture_engine.h"
+#include "driver_manager.h"
+#include "export_engine.h"
+#include "filter_engine.h"
 #include "parser_interface.h"
-#include <iostream>
-#include <fstream>
-#include <csignal>
 #include <atomic>
-#include <thread>
 #include <chrono>
-#include <vector>
+#include <csignal>
+#include <fstream>
 #include <fmt/format.h>
+#include <iostream>
+#include <memory>
+#include <thread>
+#include <vector>
 
 static std::atomic<bool> g_running{true};
 
@@ -21,88 +25,191 @@ void signalHandler(int) {
     g_running.store(false);
 }
 
+struct CliOptions {
+    std::string outputFile;
+    std::string filterText;
+    bhplus::ExportFormat format = bhplus::ExportFormat::Text;
+    uint32_t snapshotLength = 4096;
+    uint32_t maxEvents = 0;
+    uint16_t deviceAddress = 0;
+    uint16_t hubIndex = 0;
+    bool listHubs = false;
+    bool statusOnly = false;
+};
+
 void printUsage() {
     std::cout << "USBPcapGUI CLI v0.1.0\n"
               << "Usage: bhplus-cli [options]\n"
               << "\n"
               << "Options:\n"
-              << "  -o <file>     Output file (default: stdout)\n"
-              << "  -d <id>       Device ID to capture (default: all)\n"
-              << "  -b <MB>       Buffer size in MB (default: 16)\n"
-              << "  -n <count>    Max events to capture (default: unlimited)\n"
+              << "  -o <file>         Output file (default: stdout)\n"
+              << "  -d <addr>         USB device address filter (default: all)\n"
+              << "  --hub <index>     USBPcap hub index to open (default: all)\n"
+              << "  --snap <bytes>    Snapshot length (default: 4096)\n"
+              << "  --format <fmt>    txt | csv | json | pcap (default: txt)\n"
+              << "  -f <expr>         Filter expression (protocol/cmd/status/data/...)\n"
+              << "  -n <count>        Max matching events to capture (default: unlimited)\n"
+              << "  --status          Print USBPcap runtime status and exit\n"
+              << "  --list-hubs       List visible USBPcap hubs and exit\n"
               << "  -h            Show this help\n";
+}
+
+void printStatus() {
+    const auto installed = bhplus::DriverManager::IsUSBPcapInstalled();
+    const auto interfaces = bhplus::DriverManager::GetUSBPcapInterfaceCount();
+    const auto serviceInstalled = bhplus::DriverManager::IsUSBPcapServiceInstalled();
+    const auto serviceRunning = bhplus::DriverManager::IsUSBPcapDriverRunning();
+    const auto upperFilter = bhplus::DriverManager::HasUSBPcapUpperFilter();
+
+    std::cout << "USBPcap status\n"
+              << "  installed: " << (installed ? "yes" : "no") << '\n'
+              << "  interfaces: " << interfaces << '\n'
+              << "  serviceInstalled: " << (serviceInstalled ? "yes" : "no") << '\n'
+              << "  serviceRunning: " << (serviceRunning ? "yes" : "no") << '\n'
+              << "  upperFilterRegistered: " << (upperFilter ? "yes" : "no") << '\n'
+              << "  restartRecommended: " << ((installed && interfaces == 0 && upperFilter) ? "yes" : "no") << '\n';
+}
+
+void printHubs() {
+    const auto hubs = bhplus::CaptureEngine::EnumerateHubs();
+    if (hubs.empty()) {
+        std::cout << "No USBPcap hubs found.\n";
+        return;
+    }
+
+    for (const auto& hub : hubs) {
+        std::wcout << L"[" << hub.index << L"] " << hub.devicePath
+                   << L"  available=" << (hub.available ? L"yes" : L"no");
+        if (!hub.hubSymLink.empty()) {
+            std::wcout << L"  hub=" << hub.hubSymLink;
+        }
+        std::wcout << L'\n';
+    }
 }
 
 int main(int argc, char* argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
-    std::string outputFile;
-    uint32_t bufferSizeMB = 16;
-    uint32_t maxEvents = 0;
+    CliOptions options;
 
-    // Simple arg parsing
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "-o" && i + 1 < argc) outputFile = argv[++i];
-        else if (arg == "-b" && i + 1 < argc) bufferSizeMB = std::stoul(argv[++i]);
-        else if (arg == "-n" && i + 1 < argc) maxEvents = std::stoul(argv[++i]);
+        if (arg == "-o" && i + 1 < argc) options.outputFile = argv[++i];
+        else if (arg == "-d" && i + 1 < argc) options.deviceAddress = static_cast<uint16_t>(std::stoul(argv[++i]));
+        else if (arg == "--hub" && i + 1 < argc) options.hubIndex = static_cast<uint16_t>(std::stoul(argv[++i]));
+        else if (arg == "--snap" && i + 1 < argc) options.snapshotLength = std::stoul(argv[++i]);
+        else if (arg == "--format" && i + 1 < argc) options.format = bhplus::ExportEngine::ParseFormat(argv[++i]);
+        else if ((arg == "-f" || arg == "--filter") && i + 1 < argc) options.filterText = argv[++i];
+        else if (arg == "-n" && i + 1 < argc) options.maxEvents = std::stoul(argv[++i]);
+        else if (arg == "--status") options.statusOnly = true;
+        else if (arg == "--list-hubs") options.listHubs = true;
         else if (arg == "-h") { printUsage(); return 0; }
     }
 
+    if (options.statusOnly) {
+        printStatus();
+        return 0;
+    }
+
+    if (options.listHubs) {
+        printHubs();
+        return 0;
+    }
+
     bhplus::CaptureEngine engine;
-    if (!engine.OpenDriver()) {
-        std::cerr << "Error: Could not connect to BHPlus driver.\n"
-                  << "Make sure the driver is installed and running.\n";
+    if (!engine.IsDriverLoaded()) {
+        std::cerr << "Error: USBPcap is not installed or no capture interface is currently available.\n";
+        printStatus();
         return 1;
     }
 
-    std::ofstream outFile;
-    std::ostream* out = &std::cout;
-    if (!outputFile.empty()) {
-        outFile.open(outputFile);
-        if (!outFile.is_open()) {
-            std::cerr << "Error: Could not open output file: " << outputFile << "\n";
-            return 1;
-        }
-        out = &outFile;
-    }
+    const auto conditions = bhplus::FilterEngine::Parse(options.filterText);
+    const bool streamTextToStdout = options.outputFile.empty() && options.format == bhplus::ExportFormat::Text;
+    std::vector<bhplus::ExportRecord> captured;
+    captured.reserve(options.maxEvents > 0 ? options.maxEvents : 1024);
 
-    uint64_t eventCount = 0;
+    uint64_t matchedCount = 0;
 
     engine.SetEventCallback([&](BHPLUS_CAPTURE_EVENT event, std::vector<uint8_t> payloadData) {
-        const uint8_t* data = payloadData.data();
+        const auto* data = payloadData.empty() ? nullptr : payloadData.data();
         auto decoded = bhplus::ParserRegistry::Instance().Decode(event, data, event.DataLength);
-        
-        *out << fmt::format("{:>8}  {:>12.3f}  {}\n",
-            event.SequenceNumber,
-            event.Timestamp / 1000.0,
-            decoded.summary);
-        
-        eventCount++;
-        if (maxEvents > 0 && eventCount >= maxEvents) {
+        const auto hex = bhplus::ExportEngine::ToHex(data, payloadData.size());
+
+        if (!bhplus::FilterEngine::Matches(event, decoded, hex, conditions)) {
+            return;
+        }
+
+        bhplus::ExportRecord record;
+        record.event = event;
+        record.payload = std::move(payloadData);
+        record.decoded = std::move(decoded);
+
+        if (streamTextToStdout) {
+            std::cout << bhplus::ExportEngine::BuildTextLine(record) << '\n';
+        } else {
+            captured.push_back(std::move(record));
+        }
+
+        matchedCount++;
+        if (options.maxEvents > 0 && matchedCount >= options.maxEvents) {
             g_running.store(false);
         }
     });
 
     BHPLUS_CAPTURE_CONFIG config = {};
-    config.MaxEvents     = maxEvents;
-    config.SnapshotLength = 4096;
+    config.MaxEvents = options.maxEvents;
+    config.SnapshotLength = options.snapshotLength;
     config.CaptureData   = 1;
+    if (options.deviceAddress > 0) {
+        config.FilterDeviceCount = 1;
+        config.FilterDeviceAddresses[0] = options.deviceAddress;
+    }
+    if (options.hubIndex > 0) {
+        config.FilterBus = options.hubIndex;
+    }
 
     if (!engine.StartCapture(config)) {
-        std::cerr << "Error: Failed to start capture.\n";
+        std::cerr << "Error: Failed to start capture: " << engine.LastError() << "\n";
         return 1;
     }
 
-    std::cerr << "Capturing... Press Ctrl+C to stop.\n";
+    std::cerr << "Capturing USB traffic";
+    if (!conditions.empty()) {
+        std::cerr << " with filter: " << bhplus::FilterEngine::Describe(conditions);
+    }
+    std::cerr << "... Press Ctrl+C to stop.\n";
 
     while (g_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     engine.StopCapture();
-    std::cerr << fmt::format("\nCapture complete. {} events captured.\n", eventCount);
+
+    if (!streamTextToStdout) {
+        std::unique_ptr<std::ostream> ownedStream;
+        std::ostream* out = &std::cout;
+        if (!options.outputFile.empty()) {
+            auto fileMode = std::ios::out;
+            if (options.format == bhplus::ExportFormat::Pcap) fileMode |= std::ios::binary;
+            auto file = std::make_unique<std::ofstream>(options.outputFile, fileMode);
+            if (!file->is_open()) {
+                std::cerr << "Error: Could not open output file: " << options.outputFile << "\n";
+                return 1;
+            }
+            out = file.get();
+            ownedStream = std::move(file);
+        }
+
+        if (!bhplus::ExportEngine::Write(*out, options.format, captured)) {
+            std::cerr << "Error: Failed to write export output.\n";
+            return 1;
+        }
+    }
+
+    std::cerr << fmt::format("\nCapture complete. {} matching event(s) exported as {}.\n",
+        matchedCount,
+        bhplus::ExportEngine::FormatName(options.format));
 
     return 0;
 }

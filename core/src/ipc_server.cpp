@@ -10,6 +10,7 @@
 #include "pcap_parser.h"
 #include "parser_interface.h"
 #include "driver_manager.h"
+#include "usb_actions.h"
 
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
@@ -301,6 +302,8 @@ void IpcServer::HandleRequest(ClientContext* ctx, const std::string& requestJson
             result = HandleEventsQuery(paramsStr);
         } else if (method == "device.reset") {
             result = HandleDeviceReset(paramsStr);
+        } else if (method == "command.send") {
+            result = HandleCommandSend(paramsStr);
         } else {
             // Unknown method
             json resp;
@@ -536,12 +539,56 @@ std::string IpcServer::HandleEventsQuery(const std::string& /*paramsJson*/) {
 }
 
 std::string IpcServer::HandleDeviceReset(const std::string& paramsJson) {
-    if (!m_engine) return R"({"ok": false, "error": "No capture engine"})";
+    const auto params = json::parse(paramsJson.empty() ? "{}" : paramsJson);
+    const uint32_t deviceId = params.value("deviceId", 0u);
+    if (deviceId == 0) {
+        return R"({"ok": false, "message": "deviceId is required"})";
+    }
 
-    // Device reset is not implemented in the USBPcap-based engine.
-    // Return a stub success response.
-    (void)paramsJson;
-    return R"({"ok": true, "note": "reset not supported"})";    
+    const auto result = ResetUsbDevice(deviceId);
+    json resp;
+    resp["ok"] = result.ok;
+    resp["deviceId"] = deviceId;
+    resp["message"] = result.message;
+    resp["bytesTransferred"] = result.bytesTransferred;
+    return resp.dump();
+}
+
+std::string IpcServer::HandleCommandSend(const std::string& paramsJson) {
+    const auto params = json::parse(paramsJson.empty() ? "{}" : paramsJson);
+    const uint32_t deviceId = params.value("deviceId", 0u);
+    if (deviceId == 0) {
+        return R"({"ok": false, "message": "deviceId is required"})";
+    }
+
+    UsbControlTransferSetup setup;
+    setup.requestType = static_cast<uint8_t>(params.value("requestType", 0u) & 0xffu);
+    setup.request = static_cast<uint8_t>(params.value("request", 0u) & 0xffu);
+    setup.value = static_cast<uint16_t>(params.value("value", 0u) & 0xffffu);
+    setup.index = static_cast<uint16_t>(params.value("index", 0u) & 0xffffu);
+    setup.length = static_cast<uint16_t>(params.value("length", 0u) & 0xffffu);
+    setup.timeoutMs = params.value("timeoutMs", 1000u);
+
+    std::vector<uint8_t> payload;
+    if (params.contains("payloadHex") && params["payloadHex"].is_string()) {
+        std::string error;
+        if (!DecodeHexString(params["payloadHex"].get<std::string>(), payload, &error)) {
+            json resp;
+            resp["ok"] = false;
+            resp["deviceId"] = deviceId;
+            resp["message"] = error;
+            return resp.dump();
+        }
+    }
+
+    const auto result = SendUsbControlTransfer(deviceId, setup, payload);
+    json resp;
+    resp["ok"] = result.ok;
+    resp["deviceId"] = deviceId;
+    resp["message"] = result.message;
+    resp["bytesTransferred"] = result.bytesTransferred;
+    resp["dataHex"] = EncodeHexString(result.data.data(), result.data.size());
+    return resp.dump();
 }
 
 // ──────────── JSON Serialization ────────────

@@ -3,6 +3,8 @@ if(BHPLUS_BUILD_TESTS)
     
     add_executable(bhplus_tests
         core_tests/test_parsers.cpp
+        core_tests/test_core_utils.cpp
+        core_tests/test_usb_actions.cpp
     )
     
     target_link_libraries(bhplus_tests PRIVATE

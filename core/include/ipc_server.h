@@ -14,6 +14,7 @@
  *   devices.list    {}               -> { devices[] }
  *   events.query    { filter, limit } -> { events[] }
  *   device.reset    { deviceId }     -> { ok }
+ *   command.send    { deviceId, requestType, request, value, index, length, payloadHex } -> { ok }
  *
  * Notifications (server → client):
  *   capture.event   { event }
@@ -92,6 +93,7 @@ private:
     std::string HandleUsbPcapInstall(const std::string& paramsJson);
     std::string HandleEventsQuery(const std::string& paramsJson);
     std::string HandleDeviceReset(const std::string& paramsJson);
+    std::string HandleCommandSend(const std::string& paramsJson);
 
     // Helpers
     std::string EventToJson(const BHPLUS_CAPTURE_EVENT& event, const uint8_t* data, uint32_t dataLen);
