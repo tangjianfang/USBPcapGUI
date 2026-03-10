@@ -10,6 +10,7 @@
 #include <usbioctl.h>
 #include <cassert>
 #include <cstring>
+#include <vector>
 
 #pragma comment(lib, "setupapi.lib")
 
@@ -26,12 +27,61 @@ static std::string Narrow(const std::wstring& value) {
 
 /* ──────────── Install Check ──────────── */
 
-bool IsUsbPcapInstalled() {
-    // Cache result — probing 16 device handles is too slow to call repeatedly
-    static int cachedResult = -1;
-    if (cachedResult != -1) return cachedResult == 1;
+// Check registry-based evidence that USBPcap is installed, without needing
+// open device handles (which only appear after USB enumeration or reboot).
+static bool UsbPcapRegistryInstalled() {
+    // 1. Service key present in SCM
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scm) {
+        SC_HANDLE svc = OpenServiceW(scm, L"USBPcap", SERVICE_QUERY_STATUS);
+        if (svc) {
+            CloseServiceHandle(svc);
+            CloseServiceHandle(scm);
+            return true;
+        }
+        CloseServiceHandle(scm);
+    }
 
-    // Quick probe: try to open \\.\USBPcap1
+    // 2. Registry service key
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                      L"SYSTEM\\CurrentControlSet\\Services\\USBPcap",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return true;
+    }
+
+    // 3. USB class UpperFilters contains "USBPcap"
+    DWORD type = 0, cb = 0;
+    const wchar_t* usbClassKey =
+        L"SYSTEM\\CurrentControlSet\\Control\\Class\\{36fc9e60-c465-11cf-8056-444553540000}";
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, usbClassKey, L"UpperFilters",
+                     RRF_RT_REG_MULTI_SZ, &type, nullptr, &cb) == ERROR_SUCCESS && cb > 0) {
+        std::vector<wchar_t> buf((cb / sizeof(wchar_t)) + 2, L'\0');
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, usbClassKey, L"UpperFilters",
+                         RRF_RT_REG_MULTI_SZ, &type, buf.data(), &cb) == ERROR_SUCCESS) {
+            for (const wchar_t* p = buf.data(); *p; p += wcslen(p) + 1) {
+                if (_wcsicmp(p, L"USBPcap") == 0) return true;
+            }
+        }
+    }
+
+    // 4. Driver .sys file on disk
+    if (GetFileAttributesW(L"C:\\Windows\\System32\\drivers\\USBPcap.sys") != INVALID_FILE_ATTRIBUTES)
+        return true;
+    if (GetFileAttributesW(L"C:\\Program Files\\USBPcap\\USBPcap.sys") != INVALID_FILE_ATTRIBUTES)
+        return true;
+
+    return false;
+}
+
+bool IsUsbPcapInstalled() {
+    // Only cache positive results — a negative result may become positive
+    // after USB re-enumeration or without requiring a reboot.
+    static bool cachedTrue = false;
+    if (cachedTrue) return true;
+
+    // Fast path: try to open \\.\USBPcapN device handles
     for (int n = 1; n <= 16; ++n) {
         std::wstring path = L"\\\\.\\USBPcap" + std::to_wstring(n);
         HANDLE h = CreateFileW(path.c_str(),
@@ -39,17 +89,27 @@ bool IsUsbPcapInstalled() {
             nullptr, OPEN_EXISTING, 0, nullptr);
         if (h != INVALID_HANDLE_VALUE) {
             CloseHandle(h);
-            cachedResult = 1;
+            cachedTrue = true;
             return true;
         }
-        DWORD err = GetLastError();
+        const DWORD err = GetLastError();
         if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND) {
-            // Device exists but may need elevation — still installed
-            cachedResult = 1;
+            // Device node exists but we lack permission — driver is present
+            cachedTrue = true;
             return true;
         }
     }
-    cachedResult = 0;
+
+    // Slow path: check registry / SCM / filesystem evidence.
+    // USBPcap device nodes (\\.\USBPcapN) are only created after USB
+    // re-enumeration; the driver itself may be fully installed even if
+    // no device node is visible yet (e.g. right after install, before
+    // the first USB device plug-in or system restart).
+    if (UsbPcapRegistryInstalled()) {
+        // Don't cache this path — device nodes might appear soon
+        return true;
+    }
+
     return false;
 }
 
@@ -404,8 +464,16 @@ bool UsbPcapMultiReader::Open(const BHPLUS_CAPTURE_CONFIG& config) {
 
     auto hubs = EnumerateRootHubs();
     if (hubs.empty()) {
-        m_lastError = "No USBPcap devices found. Is USBPcap installed?";
-        spdlog::error("[multi] {}", m_lastError);
+        // Distinguish between "not installed" and "installed but no interfaces yet"
+        if (UsbPcapRegistryInstalled()) {
+            m_lastError = "USBPcap is installed but no capture interfaces are visible yet. "
+                          "Restart the computer or re-plug a USB device to complete the driver setup.";
+            spdlog::warn("[multi] {}", m_lastError);
+        } else {
+            m_lastError = "No USBPcap capture interfaces found. "
+                          "Please install USBPcap from https://desowin.org/usbpcap/";
+            spdlog::error("[multi] {}", m_lastError);
+        }
         return false;
     }
 

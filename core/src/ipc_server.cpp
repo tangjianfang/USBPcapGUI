@@ -432,6 +432,11 @@ std::string IpcServer::HandleCaptureStart(const std::string& paramsJson) {
 
     json result;
     result["ok"] = ok;
+    if (!ok) {
+        const auto& err = m_engine->LastError();
+        result["error"] = err.empty() ? "Failed to start capture" : err;
+        spdlog::warn("[ipc] capture.start failed: {}", result["error"].get<std::string>());
+    }
     return result.dump();
 }
 

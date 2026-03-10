@@ -7,10 +7,11 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 # Options
-option(BHPLUS_BUILD_DRIVER  "Build kernel-mode filter driver (requires WDK)" OFF)
-option(BHPLUS_BUILD_CLI     "Build command-line tool"                        ON)
-option(BHPLUS_BUILD_SDK     "Build automation SDK"                           ON)
-option(BHPLUS_BUILD_TESTS   "Build unit tests"                               ON)
+option(BHPLUS_BUILD_DRIVER    "Build kernel-mode filter driver (requires WDK)" OFF)
+option(BHPLUS_BUILD_CLI       "Build command-line tool"                        ON)
+option(BHPLUS_BUILD_SDK       "Build automation SDK"                           ON)
+option(BHPLUS_BUILD_TESTS     "Build unit tests"                               ON)
+option(BHPLUS_BUILD_LAUNCHER  "Build GUI launcher (USBPcapGUI.exe)"            ON)
 
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -38,6 +39,10 @@ endif()
 if(BHPLUS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(BHPLUS_BUILD_LAUNCHER)
+    add_subdirectory(launcher)
 endif()
 
 # Driver is built separately via WDK MSBuild (see driver/README.md)

@@ -28,7 +28,7 @@ bool CaptureEngine::OpenDriver(const BHPLUS_CAPTURE_CONFIG& config) {
     m_reader = std::make_unique<UsbPcapMultiReader>();
     if (!m_reader->Open(config)) {
         m_lastError = m_reader->LastError();
-        spdlog::error("[capture] OpenDriver: {}", m_lastError);
+        spdlog::warn("[capture] OpenDriver: {}", m_lastError);
         m_reader.reset();
         return false;
     }

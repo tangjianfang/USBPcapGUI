@@ -1,7 +1,9 @@
 /**
  * USBPcapGUI - Core Bridge
  * Communicates with the C++ bhplus-core service via Named Pipe (JSON-RPC).
- * Falls back to a mock/demo mode if the core service is not running.
+ *
+ * Demo mode is NOT activated automatically — call enableDemoMode() explicitly.
+ * When the core is not connected, requests return an error instead of fake data.
  */
 
 const net = require('net');
@@ -9,8 +11,7 @@ const { EventEmitter } = require('events');
 const path = require('path');
 
 const PIPE_NAME = '\\\\.\\pipe\\bhplus-core';
-const RECONNECT_INTERVAL = 5000;       // ms between reconnect attempts when connected
-const DEMO_RECONNECT_INTERVAL = 15000; // ms between core-check retries in DEMO mode
+const RECONNECT_INTERVAL = 5000; // ms between reconnect attempts
 
 class CoreBridge extends EventEmitter {
     constructor() {
@@ -23,18 +24,19 @@ class CoreBridge extends EventEmitter {
         this.demoMode = false;
         this.demoInterval = null;
         this.demoSeq = 0;
+        this.reconnectTimer = null;
     }
 
     /**
      * Connect to the C++ core service via Named Pipe
      */
     connect() {
-        if (this.connected) return;
+        if (this.connected || this.demoMode) return;
+        if (this.client) return; // already attempting
 
         this.client = net.createConnection(PIPE_NAME, () => {
             console.log('[CoreBridge] Connected to bhplus-core');
             this.connected = true;
-            this.demoMode = false;
             this.emit('connected');
         });
 
@@ -44,39 +46,73 @@ class CoreBridge extends EventEmitter {
         });
 
         this.client.on('error', (err) => {
-            if (!this.demoMode) {
-                console.log(`[CoreBridge] Connection failed: ${err.message}`);
-                console.log('[CoreBridge] Switching to DEMO mode');
-                this.connected = false;
-                this.demoMode = true;
-                this.emit('demo-mode');
-                this._startDemoData();
+            if (err.code === 'ENOENT') {
+                console.log('[CoreBridge] Named pipe not found — bhplus-core.exe is not running.');
+            } else {
+                console.log(`[CoreBridge] Connection error (${err.code}): ${err.message}`);
             }
+            // 'close' fires next; let it handle cleanup and retry
         });
 
         this.client.on('close', () => {
+            const wasConnected = this.connected;
             this.connected = false;
-            if (!this.demoMode) {
+            this.client = null;
+
+            if (wasConnected) {
                 console.log('[CoreBridge] Disconnected from bhplus-core');
                 this.emit('disconnected');
-                // Reconnect quickly when we had a live connection
-                setTimeout(() => this.connect(), RECONNECT_INTERVAL);
-            } else {
-                // In DEMO mode, check periodically if the core has started
-                setTimeout(() => {
-                    this.demoMode = false; // allow re-detection
+            }
+
+            if (!this.demoMode) {
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
                     this.connect();
-                }, DEMO_RECONNECT_INTERVAL);
+                }, RECONNECT_INTERVAL);
             }
         });
     }
 
     /**
-     * Send a JSON-RPC request to the core service
+     * Manually enable demo/mock mode.
+     * Demo mode generates synthetic USB events without a real bhplus-core connection.
+     */
+    enableDemoMode() {
+        if (this.demoMode) return;
+        console.log('[CoreBridge] Demo mode ENABLED (manual)');
+        this.demoMode = true;
+        // Stop any pending live reconnect
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.emit('demo-mode');
+    }
+
+    /** Disable demo mode and resume trying to connect to bhplus-core. */
+    disableDemoMode() {
+        if (!this.demoMode) return;
+        console.log('[CoreBridge] Demo mode DISABLED');
+        this.demoMode = false;
+        if (this.demoInterval) {
+            clearInterval(this.demoInterval);
+            this.demoInterval = null;
+        }
+        this.emit('demo-mode-off');
+        this.connect();
+    }
+
+    /**
+     * Send a JSON-RPC request to the core service.
+     * Rejects with an error if the core is not connected (and demo mode is off).
      */
     async request(method, params = {}) {
         if (this.demoMode) {
             return this._handleDemoRequest(method, params);
+        }
+
+        if (!this.connected) {
+            throw new Error('Core not connected. Start bhplus-core.exe or enable demo mode.');
         }
 
         return new Promise((resolve, reject) => {
@@ -97,11 +133,16 @@ class CoreBridge extends EventEmitter {
             clearInterval(this.demoInterval);
             this.demoInterval = null;
         }
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         if (this.client) {
             this.client.destroy();
             this.client = null;
         }
         this.connected = false;
+        this.demoMode = false;
     }
 
     // --- Private ---

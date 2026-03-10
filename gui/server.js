@@ -12,8 +12,62 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const CoreBridge = require('./core-bridge');
+
+// ---------------------------------------------------------------------------
+// bhplus-core.exe auto-launcher
+// ---------------------------------------------------------------------------
+
+/** Candidate locations for bhplus-core.exe relative to this script's directory */
+const CORE_EXE_CANDIDATES = [
+    path.join(__dirname, '..', 'build_fresh', 'bin', 'Release', 'bhplus-core.exe'),
+    path.join(__dirname, '..', 'build', 'bin', 'Release', 'bhplus-core.exe'),
+    path.join(__dirname, '..', 'dist', 'USBPcapGUI', 'bhplus-core.exe'),
+    path.join(path.dirname(process.execPath), 'bhplus-core.exe'),  // packaged
+    path.join(__dirname, 'bhplus-core.exe'),
+];
+
+let coreChildProcess = null;
+
+function findCoreExe() {
+    for (const p of CORE_EXE_CANDIDATES) {
+        if (fs.existsSync(p)) return p;
+    }
+    return null;
+}
+
+function spawnCoreProcess() {
+    const exePath = findCoreExe();
+    if (!exePath) {
+        console.warn('[Core] bhplus-core.exe not found. Searched:');
+        CORE_EXE_CANDIDATES.forEach(p => console.warn('  -', p));
+        console.warn('[Core] Continuing in DEMO mode. Build the C++ project to enable live capture.');
+        return;
+    }
+
+    console.log(`[Core] Launching: ${exePath}`);
+    coreChildProcess = spawn(exePath, [], {
+        detached: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+    });
+
+    coreChildProcess.stdout.on('data', d => process.stdout.write(`[bhplus-core] ${d}`.trimEnd() + '\n'));
+    coreChildProcess.stderr.on('data', d => process.stderr.write(`[bhplus-core] ${d}`.trimEnd() + '\n'));
+
+    coreChildProcess.on('exit', (code, signal) => {
+        console.log(`[Core] bhplus-core.exe exited (code=${code}, signal=${signal})`);
+        coreChildProcess = null;
+    });
+
+    coreChildProcess.on('error', err => {
+        console.error(`[Core] Failed to spawn bhplus-core.exe: ${err.message}`);
+        coreChildProcess = null;
+    });
+}
 
 // --- Configuration ---
 const DEFAULT_PORT = 17580;
@@ -136,6 +190,18 @@ async function handleWsMessage(ws, msg) {
             ws.send(JSON.stringify({ type: 'export.result', data: exported }));
             break;
         }
+        case 'demo.enable': {
+            core.enableDemoMode();
+            broadcast({ type: 'status', data: { demoMode: true, connected: false } });
+            ws.send(JSON.stringify({ type: 'demo.enabled' }));
+            break;
+        }
+        case 'demo.disable': {
+            core.disableDemoMode();
+            broadcast({ type: 'status', data: { demoMode: false, connected: core.connected } });
+            ws.send(JSON.stringify({ type: 'demo.disabled' }));
+            break;
+        }
         default:
             ws.send(JSON.stringify({ type: 'error', data: { message: `Unknown command: ${msg.type}` } }));
     }
@@ -143,17 +209,22 @@ async function handleWsMessage(ws, msg) {
 
 async function sendInitialState(ws) {
     let usbpcap = { installed: false, installerFound: false, hubs: [] };
-    try {
-        usbpcap = await core.request('usbpcap.status');
-    } catch (e) {
-        console.warn('[WS] Failed to query USBPcap status:', e.message);
+    if (core.connected) {
+        try {
+            usbpcap = await core.request('usbpcap.status');
+        } catch (e) {
+            console.warn('[WS] Failed to query USBPcap status:', e.message);
+        }
     }
+    // else: core not yet connected — browser will receive a status update
+    //        via the 'connected' event once the pipe is established.
 
     ws.send(JSON.stringify({
         type: 'init',
         data: {
             capturing,
             demoMode: core.demoMode,
+            coreConnected: core.connected,
             eventCount: captureEvents.length,
             usbpcap,
             // Send last 1000 events as initial batch
@@ -473,7 +544,23 @@ function broadcast(msg) {
     }
 }
 
-// --- REST API (supplementary) ---
+// --- REST API ---
+
+app.post('/api/demo/enable', (_req, res) => {
+    core.enableDemoMode();
+    broadcast({ type: 'status', data: { demoMode: true, coreConnected: false } });
+    res.json({ ok: true, demoMode: true });
+});
+
+app.post('/api/demo/disable', (_req, res) => {
+    core.disableDemoMode();
+    broadcast({ type: 'status', data: { demoMode: false, coreConnected: core.connected } });
+    res.json({ ok: true, demoMode: false });
+});
+
+app.get('/api/demo/status', (_req, res) => {
+    res.json({ demoMode: core.demoMode, coreConnected: core.connected });
+});
 
 app.get('/api/devices', async (req, res) => {
     try {
@@ -530,12 +617,25 @@ core.on('capture-event', (event) => {
     broadcast({ type: 'capture.event', data: event });
 });
 
-core.on('connected', () => {
+core.on('connected', async () => {
     broadcast({ type: 'status', data: { coreConnected: true, demoMode: false } });
+    // Push full USBPcap status now that the core is reachable
+    try {
+        const usbpcap = await core.request('usbpcap.status');
+        broadcast({ type: 'usbpcap.status', data: usbpcap });
+    } catch (_) {}
+});
+
+core.on('disconnected', () => {
+    broadcast({ type: 'status', data: { coreConnected: false, demoMode: false } });
 });
 
 core.on('demo-mode', () => {
     broadcast({ type: 'status', data: { coreConnected: false, demoMode: true } });
+});
+
+core.on('demo-mode-off', () => {
+    broadcast({ type: 'status', data: { coreConnected: false, demoMode: false } });
 });
 
 // --- Start Server ---
@@ -548,8 +648,10 @@ server.listen(PORT, async () => {
     console.log(`  ║  Press Ctrl+C to stop                   ║`);
     console.log(`  ╚══════════════════════════════════════════╝\n`);
 
-    // Connect to C++ core
-    core.connect();
+    // Launch bhplus-core.exe (if not already running), then connect
+    spawnCoreProcess();
+    // Give the process ~800 ms to bind the named pipe before connecting
+    setTimeout(() => core.connect(), 800);
 
     // Auto-open browser (unless in dev mode)
     if (!isDev) {
@@ -563,10 +665,17 @@ server.listen(PORT, async () => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+function shutdown() {
     console.log('\n[Server] Shutting down...');
     core.disconnect();
+    if (coreChildProcess) {
+        coreChildProcess.kill();
+        coreChildProcess = null;
+    }
     wss.close();
     server.close();
     process.exit(0);
-});
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
