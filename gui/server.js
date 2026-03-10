@@ -13,7 +13,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const { WebSocketServer } = require('ws');
 const CoreBridge = require('./core-bridge');
 
@@ -40,6 +40,7 @@ function findCoreExe() {
 }
 
 function spawnCoreProcess() {
+    if (coreChildProcess) return;   // already running
     const exePath = findCoreExe();
     if (!exePath) {
         console.warn('[Core] bhplus-core.exe not found. Searched:');
@@ -640,7 +641,64 @@ core.on('demo-mode-off', () => {
 
 // --- Start Server ---
 
-server.listen(PORT, async () => {
+function handlePortInUse() {
+    console.warn(`[Server] Port ${PORT} in use — freeing port and retrying...`);
+    try {
+        // Find the PID holding our port and kill it (exclude ourselves)
+        execSync(
+            `powershell -NoProfile -Command "` +
+            `$p = (Get-NetTCPConnection -LocalPort ${PORT} -State Listen -ErrorAction SilentlyContinue | ` +
+            `Select-Object -First 1 -ExpandProperty OwningProcess); ` +
+            `if ($p -and $p -ne ${process.pid}) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; ` +
+            `Stop-Process -Name bhplus-core -Force -ErrorAction SilentlyContinue"`,
+            { stdio: 'ignore', timeout: 5000 }
+        );
+    } catch (_) { /* ignore */ }
+    // Poll until port is free, then re-listen (max 5 seconds)
+    let waited = 0;
+    const poll = setInterval(() => {
+        waited += 200;
+        try {
+            const testSrv = require('net').createServer();
+            testSrv.once('error', () => {
+                testSrv.close();
+                if (waited >= 5000) {
+                    clearInterval(poll);
+                    console.error(`[Server] ERROR: Port ${PORT} still in use after 5s. Run: Stop-Process -Name "node","bhplus-core" -Force`);
+                    process.exit(1);
+                }
+            });
+            testSrv.once('listening', () => {
+                testSrv.close(() => {
+                    clearInterval(poll);
+                    server.listen(PORT, onListening);
+                });
+            });
+            testSrv.listen(PORT);
+        } catch (_) { /* keep polling */ }
+    }, 200);
+}
+
+let _retried = false;
+let _started = false;
+function onListenError(err) {
+    if (err.code === 'EADDRINUSE') {
+        if (!_retried) {
+            _retried = true;
+            handlePortInUse();
+        }
+        // else: duplicate event (server + wss both fire) — ignore while retry is in flight
+    } else {
+        throw err;
+    }
+}
+
+server.on('error', onListenError);
+wss.on('error', onListenError);
+
+async function onListening() {
+    if (_started) return;
+    _started = true;
     console.log(`  ╔══════════════════════════════════════════╗`);
     console.log(`  ║           USBPcapGUI Web UI             ║`);
     console.log(`  ╠══════════════════════════════════════════╣`);
@@ -662,7 +720,9 @@ server.listen(PORT, async () => {
             console.log(`[Server] Open browser manually: http://localhost:${PORT}`);
         }
     }
-});
+}
+
+server.listen(PORT, onListening);
 
 // Graceful shutdown
 function shutdown() {
