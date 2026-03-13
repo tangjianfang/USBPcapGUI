@@ -1,0 +1,10 @@
+{
+  "name": "usbpcapgui",
+  "version": "0.1.0",
+  "dependencies": [
+    "gtest",
+    "spdlog",
+    "fmt",
+    "nlohmann-json"
+  ]
+}

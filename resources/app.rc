@@ -1,0 +1,65 @@
+/*
+ * USBPcapGUI — shared Windows resource script
+ * Embeds application icon and version information.
+ *
+ * This file is included by all EXE / DLL targets via CMake.
+ * The icon file (app.ico) lives at the repository root.
+ */
+
+#include <winres.h>
+
+/* ---- Application Icon ---- */
+/* IDI_ICON1 = 1 makes this the default icon shown in Explorer */
+#define IDI_ICON1 1
+IDI_ICON1  ICON  "app.ico"
+
+/* ---- Version Information ---- */
+#ifndef VER_MAJOR
+#  define VER_MAJOR 1
+#endif
+#ifndef VER_MINOR
+#  define VER_MINOR 0
+#endif
+#ifndef VER_PATCH
+#  define VER_PATCH 0
+#endif
+#ifndef VER_BUILD
+#  define VER_BUILD 0
+#endif
+
+#define _STR(x)  #x
+#define STR(x)   _STR(x)
+#define VER_FILE_STR  STR(VER_MAJOR) "." STR(VER_MINOR) "." STR(VER_PATCH) "." STR(VER_BUILD)
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VER_MAJOR, VER_MINOR, VER_PATCH, VER_BUILD
+ PRODUCTVERSION VER_MAJOR, VER_MINOR, VER_PATCH, VER_BUILD
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS      VS_FF_DEBUG
+#else
+ FILEFLAGS      0x0L
+#endif
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"   /* US English, Unicode */
+        BEGIN
+            VALUE "CompanyName",      "USBPcapGUI"
+            VALUE "FileDescription",  "USBPcapGUI - USB Protocol Analyzer"
+            VALUE "FileVersion",      VER_FILE_STR
+            VALUE "InternalName",     "USBPcapGUI"
+            VALUE "LegalCopyright",   "Copyright (C) 2024-2026 USBPcapGUI Contributors"
+            VALUE "OriginalFilename", "USBPcapGUI.exe"
+            VALUE "ProductName",      "USBPcapGUI"
+            VALUE "ProductVersion",   VER_FILE_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200   /* US English, Unicode */
+    END
+END

@@ -1,0 +1,46 @@
+# Build outputs
+build/
+build_fresh/
+out/
+x64/
+Debug/
+Release/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.opendb
+*.db
+
+# Compiled
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.sys
+*.pdb
+*.exp
+*.ilk
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Driver build artifacts
+*.cat
+*.cer
+*.pfx
+
+# Package managers
+vcpkg_installed/
+gui/node_modules/
+dist/
+Logs/
+*.log
+.pkg-cache/

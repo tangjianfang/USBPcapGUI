@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USBPcapGUI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Top Toolbar -->
+    <header id="toolbar">
+        <div class="toolbar-left">
+            <h1 class="app-title">USBPcapGUI</h1>
+            <button id="btn-start" class="btn btn-success" title="Start Capture (F5)">▶ Start</button>
+            <button id="btn-stop" class="btn btn-danger" disabled title="Stop Capture (F6)">■ Stop</button>
+            <button id="btn-interface-options" class="btn" title="Interface Options">⚙ Options</button>
+            <span class="toolbar-sep"></span>
+            <button id="btn-clear" class="btn" title="Clear (Ctrl+L)">✕ Clear</button>
+            <button id="btn-export" class="btn" title="Export (Ctrl+E)">⬇ Export</button>
+            <button id="btn-reset-device" class="btn" title="Reset selected device">↻ Reset Device</button>
+            <button id="btn-send-command" class="btn" title="Send USB control transfer">⇢ Control</button>
+        </div>
+        <div class="toolbar-right">
+            <span id="status-badge" class="badge badge-info">DEMO</span>
+            <span id="event-count">Events: 0</span>
+            <span id="dropped-count">Dropped: 0</span>
+        </div>
+    </header>
+
+    <section id="usbpcap-banner" class="install-banner hidden">
+        <div class="install-banner-text">
+            <strong>USBPcap 未安装。</strong>
+            <span id="usbpcap-banner-detail">安装后才能进行真实 USB 抓包。</span>
+        </div>
+        <div class="install-banner-actions">
+            <button id="btn-install-usbpcap" class="btn btn-warning">安装 USBPcap</button>
+            <button id="btn-refresh-usbpcap" class="btn btn-sm">重新扫描</button>
+        </div>
+    </section>
+
+    <!-- Main Layout -->
+    <div id="main-layout">
+        <!-- Left: Device Tree -->
+        <aside id="device-panel" class="panel">
+            <div class="panel-header">
+                <span>Devices</span>
+                <button id="btn-refresh-devices" class="btn btn-sm" title="Refresh">⟳</button>
+            </div>
+            <div id="device-tree" class="panel-body"></div>
+        </aside>
+
+        <!-- Resize Handle -->
+        <div class="resize-handle resize-h" data-left="device-panel" data-right="center-panel"></div>
+
+        <!-- Center: Capture Table + Detail -->
+        <div id="center-panel">
+            <!-- Filter Bar -->
+            <div id="filter-bar">
+                <input type="text" id="filter-input" placeholder="Filter: protocol:USB command:GET_DESCRIPTOR status:!STALL data:ff01..." spellcheck="false">
+                <button id="btn-filter-apply" class="btn btn-sm">Apply</button>
+                <button id="btn-filter-clear" class="btn btn-sm">Clear</button>
+                <span id="filter-count"></span>
+            </div>
+
+            <!-- Quick Filter Chips (multi-select) -->
+            <div id="quick-filter-chips">
+                <span class="qf-label">方向:</span>
+                <button class="qf-btn" data-filter="direction:>>>">OUT ►</button>
+                <button class="qf-btn" data-filter="direction:<<<">◄ IN</button>
+                <span class="qf-divider"></span>
+                <span class="qf-label">数据:</span>
+                <button class="qf-btn" data-filter="len:>0">有数据</button>
+                <button class="qf-btn" data-filter="len:0">无数据</button>
+                <span class="qf-divider"></span>
+                <span class="qf-label">状态:</span>
+                <button class="qf-btn" data-filter="status:STALL">STALL</button>
+                <button class="qf-btn" data-filter="status:OK">OK</button>
+                <span class="qf-divider"></span>
+                <span class="qf-label">传输类型:</span>
+                <button class="qf-btn" data-filter="command:CONTROL_TRANSFER">CTRL</button>
+                <button class="qf-btn" data-filter="command:BULK_OR_INTERRUPT">BULK/INT</button>
+                <button class="qf-btn" data-filter="command:GET_DESCRIPTOR">GET_DESC</button>
+                <button class="qf-btn" data-filter="command:SET_CONFIGURATION">SET_CFG</button>
+            </div>
+
+            <!-- Device Filter Panel -->
+            <details id="device-filter-panel" class="device-filter-panel">
+                <summary class="device-filter-summary">
+                    <span>设备过滤</span>
+                    <span class="devf-hint">VID / PID / Class / 地址</span>
+                </summary>
+                <div class="device-filter-body">
+                    <label class="devf-field">
+                        <span>VID (hex)</span>
+                        <input type="text" id="devf-vid" maxlength="4" placeholder="046D" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>PID (hex)</span>
+                        <input type="text" id="devf-pid" maxlength="4" placeholder="C52B" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>Class</span>
+                        <input type="text" id="devf-class" maxlength="3" placeholder="3" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>SubClass</span>
+                        <input type="text" id="devf-subclass" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>Bus</span>
+                        <input type="text" id="devf-bus" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>Addr</span>
+                        <input type="text" id="devf-addr" maxlength="3" placeholder="5" class="mono devf-input" spellcheck="false">
+                    </label>
+                    <label class="devf-field">
+                        <span>方向</span>
+                        <select id="devf-dir" class="devf-input">
+                            <option value="">不限</option>
+                            <option value=">>>">OUT (Host→Dev)</option>
+                            <option value="<<<">IN  (Dev→Host)</option>
+                        </select>
+                    </label>
+                    <div class="devf-actions">
+                        <button id="btn-devfilter-apply" class="btn btn-sm btn-primary">应用</button>
+                        <button id="btn-devfilter-clear" class="btn btn-sm">清除</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Capture Table -->
+            <div id="capture-table-container" class="panel">
+                <div id="capture-table-header">
+                    <span class="col-seq">No.</span>
+                    <span class="col-time">Time</span>
+                    <span class="col-src">Source</span>
+                    <span class="col-dst">Destination</span>
+                    <span class="col-proto">Protocol</span>
+                    <span class="col-len">Len</span>
+                    <span class="col-info">Info</span>
+                    <span class="col-hex">Hex</span>
+                </div>
+                <div id="capture-table-body" class="virtual-scroll-container" style="position:relative">
+                    <div id="capture-rows"></div>
+                    <button id="btn-jump-latest" class="jump-latest-btn hidden">↓ Jump to Latest</button>
+                </div>
+            </div>
+
+            <!-- Resize Handle (vertical) -->
+            <div class="resize-handle resize-v" data-top="capture-table-container" data-bottom="detail-panel"></div>
+
+            <!-- Detail Panel -->
+            <div id="detail-panel" class="panel">
+                <div class="tab-bar">
+                    <button class="tab active" data-tab="hex-tab">Hex View</button>
+                    <button class="tab" data-tab="decode-tab">Protocol Decode</button>
+                </div>
+                <div id="hex-tab" class="tab-content active">
+                    <pre id="hex-view" class="hex-view"></pre>
+                </div>
+                <div id="decode-tab" class="tab-content">
+                    <ul id="decode-tree" class="decode-tree"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interface Options Dialog -->
+    <dialog id="interface-options-dialog">
+        <div class="io-titlebar">
+            <h3 id="io-title-text">USBPcapGUI &middot; Interface Options</h3>
+            <button class="io-close-btn" id="io-btn-close" title="Close">&times;</button>
+        </div>
+        <div class="io-tabs">
+            <button class="io-tab active">Default</button>
+        </div>
+        <div class="io-body">
+            <!-- Capture Parameters -->
+            <div>
+                <div class="io-section-label" style="margin-bottom:8px">Capture Parameters</div>
+                <div class="io-param-grid">
+                    <div class="io-param-row">
+                        <label class="io-param-label" for="io-snaplen">Snapshot length (bytes)</label>
+                        <input class="io-param-input" type="number" id="io-snaplen" min="1" max="65535" value="65535">
+                        <button class="io-reset-btn" id="io-reset-snaplen" title="Reset to default">&#x21ba;</button>
+                    </div>
+                    <div class="io-param-row">
+                        <label class="io-param-label" for="io-buflen">Capture buffer length (bytes)</label>
+                        <input class="io-param-input" type="number" id="io-buflen" min="1" value="1048576">
+                        <button class="io-reset-btn" id="io-reset-buflen" title="Reset to default">&#x21ba;</button>
+                    </div>
+                </div>
+            </div>
+            <!-- Capture Scope Checkboxes -->
+            <div>
+                <div class="io-section-label" style="margin-bottom:8px">Capture Scope</div>
+                <div class="io-checks">
+                    <label>
+                        <input type="checkbox" id="io-chk-capture-all" checked>
+                        Capture from all devices connected
+                    </label>
+                    <label>
+                        <input type="checkbox" id="io-chk-capture-new" checked>
+                        Capture from newly connected devices <span style="color:var(--text-secondary);font-style:italic">(planned)</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" id="io-chk-inject-desc" checked>
+                        Inject already connected devices descriptors into capture data <span style="color:var(--text-secondary);font-style:italic">(planned)</span>
+                    </label>
+                </div>
+            </div>
+            <!-- Attached USB Devices Tree -->
+            <div>
+                <div class="io-devtree-header">
+                    <span>Attached USB Devices</span>
+                    <button class="btn btn-sm" id="io-btn-refresh-devices" title="Refresh device list">&#x21ba; Refresh</button>
+                </div>
+                <div id="io-device-tree" style="margin-top:6px">
+                    <div class="io-devtree-loading">Connect to capture service to list devices.</div>
+                </div>
+            </div>
+        </div>
+        <div class="io-footer">
+            <div class="io-footer-save">
+                <input type="checkbox" id="io-chk-save-on-start" checked>
+                <label for="io-chk-save-on-start">Save parameters on capture start</label>
+            </div>
+            <div class="io-footer-buttons">
+                <div class="io-footer-left">
+                    <button class="btn" id="io-btn-restore">Restore Defaults</button>
+                </div>
+                <div class="io-footer-right">
+                    <button class="btn btn-primary" id="io-btn-start">Start</button>
+                    <button class="btn" id="io-btn-save">Save</button>
+                    <button class="btn" id="io-btn-discard">Discard</button>
+                    <button class="btn" id="io-btn-help">Help</button>
+                </div>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Status Bar -->
+    <footer id="status-bar">
+        <span class="sb-left"  id="sb-frame">Ready</span>
+        <span class="sb-mid"   id="sb-packets">Packets: 0</span>
+        <span class="sb-right" id="sb-profile">Profile: Default</span>
+    </footer>
+
+    <!-- Export Dialog -->
+    <dialog id="export-dialog">
+        <h3>Export Capture Data</h3>
+        <div class="dialog-body">
+            <label>Format:
+                <select id="export-format">
+                    <option value="json">JSON</option>
+                    <option value="csv">CSV</option>
+                    <option value="txt">Text</option>
+                    <option value="pcap">PCAP</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="export-filtered"> Export filtered data only</label>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn btn-success" id="btn-export-ok">Export</button>
+            <button class="btn" id="btn-export-cancel">Cancel</button>
+        </div>
+    </dialog>
+
+    <dialog id="command-dialog">
+        <h3>Send USB Control Transfer</h3>
+        <div class="dialog-body command-dialog-body">
+            <div id="command-device-label" class="command-device-label">No device selected</div>
+            <label>bmRequestType (hex)
+                <input type="text" id="cmd-request-type" value="80" class="mono">
+            </label>
+            <label>bRequest (hex)
+                <input type="text" id="cmd-request" value="06" class="mono">
+            </label>
+            <label>wValue (hex)
+                <input type="text" id="cmd-value" value="0100" class="mono">
+            </label>
+            <label>wIndex (hex)
+                <input type="text" id="cmd-index" value="0000" class="mono">
+            </label>
+            <label>wLength (decimal)
+                <input type="number" id="cmd-length" value="18" min="0">
+            </label>
+            <label>Payload Hex (OUT only)
+                <textarea id="cmd-payload" rows="4" class="mono" placeholder="Optional payload for host-to-device requests"></textarea>
+            </label>
+        </div>
+        <div class="dialog-footer">
+            <button class="btn btn-success" id="btn-command-send">Send</button>
+            <button class="btn" id="btn-command-cancel">Cancel</button>
+        </div>
+    </dialog>
+
+    <!-- Scripts (vanilla JS, no framework) -->
+    <script src="js/websocket.js"></script>
+    <script src="js/hexview.js"></script>
+    <script src="js/filter.js"></script>
+    <script src="js/filter-presets.js"></script>
+    <script src="js/capture.js"></script>
+    <script src="js/devicetree.js"></script>
+    <script src="js/interface-options.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
