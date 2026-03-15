@@ -75,6 +75,35 @@ static const char* BusTypeName(uint32_t busType) {
     }
 }
 
+// Maps bDeviceClass to a human-readable protocol label.
+// See USB Device Class Codes: https://www.usb.org/defined-class-codes
+static const char* UsbDeviceClassLabel(uint8_t deviceClass) {
+    switch (deviceClass) {
+        case 0x01: return "Audio";
+        case 0x02: return "CDC";
+        case 0x03: return "HID";
+        case 0x05: return "PID";
+        case 0x06: return "Image";
+        case 0x07: return "Printer";
+        case 0x08: return "MSD";
+        case 0x09: return "HUB";
+        case 0x0A: return "CDC-Data";
+        case 0x0B: return "CCID";
+        case 0x0D: return "Content-Sec";
+        case 0x0E: return "Video";
+        case 0x0F: return "Personal-Health";
+        case 0x10: return "AV";
+        case 0x11: return "Billboard";
+        case 0x12: return "USB-C-Bridge";
+        case 0xDC: return "Diagnostic";
+        case 0xE0: return "Wireless";
+        case 0xEF: return "Misc";
+        case 0xFE: return "App-Specific";
+        case 0xFF: return "Vendor";
+        default:   return nullptr;  // unknown / use-class-info-in-interface
+    }
+}
+
 // ──────────── Constructor / Destructor ────────────
 
 IpcServer::IpcServer() {
@@ -96,6 +125,20 @@ IpcServer::~IpcServer() {
 
 void IpcServer::SetCaptureEngine(CaptureEngine* engine) {
     m_engine = engine;
+}
+
+// ──────────── Device Cache ────────────
+
+void IpcServer::UpdateDeviceCache() {
+    if (!m_engine) return;
+    auto devices = m_engine->EnumerateDevices();
+    std::lock_guard<std::mutex> lock(m_deviceCacheMutex);
+    m_deviceCache.clear();
+    for (const auto& dev : devices) {
+        uint32_t key = (static_cast<uint32_t>(dev.Bus) << 16) | dev.DeviceAddress;
+        m_deviceCache[key] = dev;
+    }
+    spdlog::debug("Device cache updated: {} devices", m_deviceCache.size());
 }
 
 // ──────────── Start / Stop ────────────
@@ -527,16 +570,28 @@ std::string IpcServer::HandleDevicesList(const std::string& /*paramsJson*/) {
 
     if (m_engine) {
         auto devices = m_engine->EnumerateDevices();
+        // Update cache so subsequent capture events get enriched with VID/PID/name
+        {
+            std::lock_guard<std::mutex> lock(m_deviceCacheMutex);
+            m_deviceCache.clear();
+            for (const auto& dev : devices) {
+                uint32_t key = (static_cast<uint32_t>(dev.Bus) << 16) | dev.DeviceAddress;
+                m_deviceCache[key] = dev;
+            }
+        }
         for (const auto& dev : devices) {
             result.push_back(json::parse(DeviceInfoToJson(dev)));
         }
     } else {
         // Fallback: enumerate directly from root hubs before capture starts
-        // Same pattern as HandleHubsList below
         const auto hubs = EnumerateRootHubs();
+        std::lock_guard<std::mutex> lock(m_deviceCacheMutex);
+        m_deviceCache.clear();
         for (const auto& hub : hubs) {
             auto devices = EnumerateUsbDevicesOnHub(hub.hubSymLink, hub.index);
             for (const auto& dev : devices) {
+                uint32_t key = (static_cast<uint32_t>(dev.Bus) << 16) | dev.DeviceAddress;
+                m_deviceCache[key] = dev;
                 result.push_back(json::parse(DeviceInfoToJson(dev)));
             }
         }
@@ -625,8 +680,9 @@ std::string IpcServer::HandleUsbPcapRescan(const std::string& /*paramsJson*/) {
     const bool ok = DriverManager::RescanUsbDevices();
     // Wait briefly for PnP to react, then re-read status
     if (ok) Sleep(1500);
-    // Force re-enumeration of hubs after rescan
+    // Force re-enumeration of hubs after rescan, then refresh device cache
     if (m_engine) m_engine->RefreshHubs();
+    UpdateDeviceCache();
     json result;
     result["ok"] = ok;
     result["interfacesAvailable"] = DriverManager::GetUSBPcapInterfaceCount();
@@ -748,14 +804,49 @@ std::string IpcServer::EventToJson(const BHPLUS_CAPTURE_EVENT& event,
     j["deviceId"]  = (static_cast<uint32_t>(event.Bus) << 16) | event.Device;
 
     // ── USB identity ────────────────────────────────────────────────────────
-    j["bus"]          = event.Bus;
+    j["bus"]           = event.Bus;
     j["deviceAddress"] = event.Device;
-    j["device"]       = fmt::format("Bus {} Dev {}", event.Bus, event.Device);
-    j["endpoint"]     = event.Endpoint;
-    j["transferType"] = UsbTransferTypeName(event.TransferType);
-    j["urbFunction"]  = UrbFunctionName(event.UrbFunction);
-    j["irpId"]        = event.IrpId;
-    j["protocol"]     = (decoded.protocol.empty() || decoded.protocol == "Unknown") ? "USB" : decoded.protocol;
+    j["endpoint"]      = event.Endpoint;
+    j["transferType"]  = UsbTransferTypeName(event.TransferType);
+    j["urbFunction"]   = UrbFunctionName(event.UrbFunction);
+    j["irpId"]         = event.IrpId;
+
+    // Enrich with VID/PID/class/name from device cache (populated by devices.list)
+    std::string deviceLabel = fmt::format("Bus{}/Dev{}", event.Bus, event.Device);
+    std::string protocolLabel = (decoded.protocol.empty() || decoded.protocol == "Unknown") ? "USB" : decoded.protocol;
+    {
+        std::lock_guard<std::mutex> cacheLock(m_deviceCacheMutex);
+        uint32_t key = (static_cast<uint32_t>(event.Bus) << 16) | event.Device;
+        auto it = m_deviceCache.find(key);
+        if (it != m_deviceCache.end()) {
+            const auto& dev = it->second;
+            j["vid"]      = dev.VendorId;
+            j["pid"]      = dev.ProductId;
+            char vidStr[8], pidStr[8];
+            snprintf(vidStr, sizeof(vidStr), "%04X", dev.VendorId);
+            snprintf(pidStr, sizeof(pidStr), "%04X", dev.ProductId);
+            j["vidHex"]   = vidStr;
+            j["pidHex"]   = pidStr;
+            j["class"]    = dev.DeviceClass;
+            j["subClass"] = dev.DeviceSubClass;
+
+            std::string name = WideToUtf8(dev.DeviceName, BHPLUS_MAX_DEVICE_NAME);
+            if (!name.empty()) {
+                j["deviceName"] = name;
+                deviceLabel = fmt::format("{} [{:s}:{:s}]", name, vidStr, pidStr);
+            } else if (dev.VendorId || dev.ProductId) {
+                deviceLabel = fmt::format("{:s}:{:s}", vidStr, pidStr);
+            }
+
+            // Resolve protocol from device class if it's still generic "USB"
+            if (protocolLabel == "USB" && dev.DeviceClass != 0) {
+                const char* classLabel = UsbDeviceClassLabel(dev.DeviceClass);
+                if (classLabel) protocolLabel = classLabel;
+            }
+        }
+    }
+    j["device"]   = deviceLabel;
+    j["protocol"] = protocolLabel;
     j["command"]      = decoded.commandName.empty() ? defaultCommand : decoded.commandName;
     j["summary"]      = decoded.summary.empty()
         ? fmt::format("{} {}", UsbTransferTypeName(event.TransferType), defaultCommand)

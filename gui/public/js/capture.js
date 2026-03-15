@@ -25,7 +25,6 @@ const CaptureTable = {
     // DOM references (set in init)
     _container: null,
     _scrollContent: null,
-    _viewport: null,
     _statusCount: null,
     _statusFiltered: null,
     _jumpBtn: null,
@@ -50,19 +49,17 @@ const CaptureTable = {
             });
         }
 
-        // Create virtual scroll structure
-        this._viewport = document.createElement('div');
-        this._viewport.className = 'virtual-viewport';
-        this._viewport.style.position = 'relative';
-        this._viewport.style.overflow = 'hidden';
-
+        // Create virtual scroll structure.
+        // _scrollContent sits directly inside the scrollable _container — no
+        // intermediate div, as any overflow:hidden wrapper would clip rows to 0.
         this._scrollContent = document.createElement('div');
         this._scrollContent.className = 'virtual-content';
         this._scrollContent.style.position = 'relative';
 
-        this._viewport.appendChild(this._scrollContent);
         this._container.innerHTML = '';
-        this._container.appendChild(this._viewport);
+        this._container.appendChild(this._scrollContent);
+        // Re-attach jump button (it was detached by innerHTML clear above)
+        if (this._jumpBtn) this._container.appendChild(this._jumpBtn);
 
         // Scroll handler
         this._container.addEventListener('scroll', () => {
@@ -70,7 +67,7 @@ const CaptureTable = {
         });
 
         // Click handler for row selection
-        this._viewport.addEventListener('click', (e) => {
+        this._scrollContent.addEventListener('click', (e) => {
             const row = e.target.closest('.capture-row');
             if (row) {
                 const idx = parseInt(row.dataset.index, 10);
@@ -347,8 +344,15 @@ const CaptureTable = {
         // Direction-based Source / Destination
         // direction: '>>>' = host→device (DOWN/OUT), '<<<' = device→host (UP/IN)
         const isDown = (event.direction || '') === '>>>';
-        const devNum  = event.device || '?';
-        const devName = devNum;  // numeric or string device id
+        // Prefer deviceName + VID:PID, fall back to event.device ("Bus N Dev M")
+        let devName = event.device || '?';
+        if (event.deviceName) {
+            devName = event.vidHex && event.pidHex
+                ? `${event.deviceName} (${event.vidHex}:${event.pidHex})`
+                : event.deviceName;
+        } else if (event.vidHex && event.pidHex) {
+            devName = `${event.vidHex}:${event.pidHex}`;
+        }
         const source = isDown ? 'host' : devName;
         const dest   = isDown ? devName : 'host';
         const arrow  = isDown

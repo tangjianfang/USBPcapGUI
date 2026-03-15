@@ -296,6 +296,38 @@ html, body {
 }
 .qf-btn:hover  { background: var(--bg-hover); color: var(--text-primary); }
 .qf-btn.active { background: var(--accent, #0078d4); color: #fff; border-color: var(--accent, #0078d4); }
+/* Preset buttons: slightly bolder visual weight */
+.qf-preset { font-family: var(--font-ui); font-weight: 600; color: var(--text-primary); border-color: var(--border-color); }
+.qf-preset.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+/* Clear-all button: muted danger color */
+.qf-clear { color: var(--text-secondary); border-color: transparent; }
+.qf-clear:hover { color: var(--danger); border-color: var(--danger); background: rgba(244,67,54,0.1); }
+/* Spacer pushes clear-all to the right end */
+.qf-spacer { flex: 1; }
+
+/* ── Protocol Filter Bar ── */
+#proto-filter-bar {
+    display: flex;
+    align-items: center;
+    padding: 2px 8px;
+    gap: 4px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border-color);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-shrink: 0;
+}
+#proto-filter-bar::-webkit-scrollbar { display: none; }
+.pf-label { font-size: 10px; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; }
+.qf-proto.active {
+    background: rgba(0, 120, 212, 0.15);
+    color: var(--accent, #0078d4);
+    border-color: rgba(0, 120, 212, 0.5);
+}
+.qf-proto:not(.active) {
+    opacity: 0.45;
+}
 
 /* ── Device Filter Panel ── */
 .device-filter-panel {

@@ -62,25 +62,42 @@
                 <span id="filter-count"></span>
             </div>
 
-            <!-- Quick Filter Chips (multi-select) -->
+            <!-- Quick Filter Chips -->
             <div id="quick-filter-chips">
-                <span class="qf-label">方向:</span>
+                <!-- Preset actions (exclusive) -->
+                <button class="qf-btn qf-preset" data-preset="all"       title="显示全部，清除所有过滤条件">全部</button>
+                <button class="qf-btn qf-preset" data-preset="important" title="仅显示控制传输和有数据的包">重要</button>
+                <button class="qf-btn qf-preset" data-preset="errors"    title="仅显示 STALL / 错误">错误</button>
+                <span class="qf-divider"></span>
+                <!-- Direction -->
                 <button class="qf-btn" data-filter="direction:>>>">OUT ►</button>
                 <button class="qf-btn" data-filter="direction:<<<">◄ IN</button>
                 <span class="qf-divider"></span>
-                <span class="qf-label">数据:</span>
+                <!-- Data presence -->
                 <button class="qf-btn" data-filter="len:>0">有数据</button>
-                <button class="qf-btn" data-filter="len:0">无数据</button>
                 <span class="qf-divider"></span>
-                <span class="qf-label">状态:</span>
+                <!-- Transfer type -->
+                <button class="qf-btn" data-filter="command:CONTROL_TRANSFER">控制</button>
+                <button class="qf-btn" data-filter="command:BULK_OR_INTERRUPT">批量/中断</button>
                 <button class="qf-btn" data-filter="status:STALL">STALL</button>
-                <button class="qf-btn" data-filter="status:OK">OK</button>
-                <span class="qf-divider"></span>
-                <span class="qf-label">传输类型:</span>
-                <button class="qf-btn" data-filter="command:CONTROL_TRANSFER">CTRL</button>
-                <button class="qf-btn" data-filter="command:BULK_OR_INTERRUPT">BULK/INT</button>
-                <button class="qf-btn" data-filter="command:GET_DESCRIPTOR">GET_DESC</button>
-                <button class="qf-btn" data-filter="command:SET_CONFIGURATION">SET_CFG</button>
+                <!-- Spacer + clear-all -->
+                <span class="qf-spacer"></span>
+                <button class="qf-btn qf-clear" id="btn-qf-clear-all" title="清除所有过滤条件">✕ 取消</button>
+            </div>
+
+            <!-- Protocol Filter (multi-select: all ON by default, click to exclude) -->
+            <div id="proto-filter-bar">
+                <span class="qf-label pf-label">协议:</span>
+                <button class="qf-btn qf-proto active" data-proto="USB"      title="USB (通用)">USB</button>
+                <button class="qf-btn qf-proto active" data-proto="HID"      title="HID 人机接口 (鼠标/键盘)">HID</button>
+                <button class="qf-btn qf-proto active" data-proto="MSD"      title="Mass Storage 大容量存储">MSD</button>
+                <button class="qf-btn qf-proto active" data-proto="Audio"    title="USB Audio">Audio</button>
+                <button class="qf-btn qf-proto active" data-proto="CDC"      title="CDC 通信设备">CDC</button>
+                <button class="qf-btn qf-proto active" data-proto="Video"    title="USB Video">Video</button>
+                <button class="qf-btn qf-proto active" data-proto="Wireless" title="无线/蓝牙">Wireless</button>
+                <button class="qf-btn qf-proto active" data-proto="Vendor"   title="厂商自定义">Vendor</button>
+                <span class="qf-spacer"></span>
+                <button class="qf-btn qf-clear" id="btn-proto-select-all" title="显示所有协议">全选</button>
             </div>
 
             <!-- Device Filter Panel -->

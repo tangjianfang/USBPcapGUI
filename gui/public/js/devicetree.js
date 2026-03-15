@@ -138,7 +138,10 @@ const DeviceTree = {
 
         const name = dev.name || `Device ${dev.id}`;
         const info = [];
-        if (dev.vid && dev.pid) info.push(`VID:${dev.vid} PID:${dev.pid}`);
+        // Use hex strings (vidHex/pidHex) when available, fall back to decimal
+        const vidStr = dev.vidHex || (dev.vid ? dev.vid.toString(16).toUpperCase().padStart(4, '0') : null);
+        const pidStr = dev.pidHex || (dev.pid ? dev.pid.toString(16).toUpperCase().padStart(4, '0') : null);
+        if (vidStr && pidStr) info.push(`${vidStr}:${pidStr}`);
         if (dev.serial) info.push(`S/N:${dev.serial}`);
         if (dev.driver) info.push(dev.driver);
 
@@ -196,13 +199,17 @@ const DeviceTree = {
     },
 
     _deviceIcon(dev) {
-        const bus = (dev.bus || '').toLowerCase();
-        if (bus === 'usb') {
-            if (dev.name && /storage|disk|mass/i.test(dev.name)) return '💾';
-            if (dev.name && /keyboard|hid/i.test(dev.name)) return '⌨️';
+        // dev.busType is the string "USB"/"NVMe"/etc.; dev.bus is a numeric index
+        const busType = (dev.busType || '').toLowerCase();
+        const cls = dev.class || 0;
+        if (dev.isHub) return '🔀';
+        if (busType === 'usb' || cls !== undefined) {
+            if (cls === 0x08 || (dev.name && /storage|disk|mass/i.test(dev.name))) return '💾';
+            if (cls === 0x03 || (dev.name && /keyboard/i.test(dev.name))) return '⌨️';
             if (dev.name && /mouse/i.test(dev.name)) return '🖱️';
-            if (dev.name && /audio|speaker/i.test(dev.name)) return '🔊';
-            if (dev.name && /camera|video/i.test(dev.name)) return '📷';
+            if (cls === 0x01 || (dev.name && /audio|speaker/i.test(dev.name))) return '🔊';
+            if (cls === 0x0E || (dev.name && /camera|video/i.test(dev.name))) return '📷';
+            if (cls === 0xE0 || (dev.name && /bluetooth|wireless/i.test(dev.name))) return '📡';
             if (dev.name && /network|ethernet|wifi/i.test(dev.name)) return '🌐';
             return '🔌';
         }

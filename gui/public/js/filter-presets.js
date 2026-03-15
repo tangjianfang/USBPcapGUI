@@ -21,32 +21,103 @@ const FilterPresets = {
 
     // Active chip filter tokens — multi-select, each is a filter string token
     _chipTokens: new Set(),
-    // Manual text input 
+    // Manual text input
     _manualText: '',
     // Device panel filter tokens
     _deviceTokens: [],
+    // Protocol multi-select: set of DESELECTED protocol names (empty = show all)
+    _deselectedProtocols: new Set(),
 
     // Cached parsed conditions (performance: avoid re-parsing on every row)
     _combinedConditions: [],
 
     init() {
         this._bindChips();
+        this._bindProtoChips();
         this._bindManualInput();
         this._bindDevicePanel();
         this._loadFromStorage();
     },
 
+    // ── Preset definitions ─────────────────────────────────────────────────
+
+    PRESETS: {
+        // "全部": no filters — show everything
+        all:       [],
+        // "重要": control transfers with data, or GET_DESCRIPTOR / SET_CONFIGURATION
+        important: ['command:CONTROL_TRANSFER', 'len:>0'],
+        // "错误": STALL events only
+        errors:    ['status:STALL'],
+    },
+
     // ── Chips ──────────────────────────────────────────────────────────────
 
     _bindChips() {
-        document.querySelectorAll('.qf-btn').forEach(btn => {
+        // Regular filter chips (multi-select)
+        document.querySelectorAll('.qf-btn[data-filter]').forEach(btn => {
             btn.addEventListener('click', () => this._toggleChip(btn));
         });
+
+        // Preset buttons (exclusive actions)
+        document.querySelectorAll('.qf-btn[data-preset]').forEach(btn => {
+            btn.addEventListener('click', () => this._applyPreset(btn.dataset.preset));
+        });
+
+        // Clear-all button: reset all filters including protocol
+        const clearAll = document.getElementById('btn-qf-clear-all');
+        if (clearAll) {
+            clearAll.addEventListener('click', () => {
+                this.clearChips();
+                this.clearDevicePanel();
+                const input = document.getElementById('filter-input');
+                if (input) input.value = '';
+                this._manualText = '';
+                this._deselectedProtocols.clear();
+                document.querySelectorAll('.qf-proto').forEach(b => b.classList.add('active'));
+                this._apply();
+            });
+        }
+    },
+
+    _applyPreset(name) {
+        const tokens = this.PRESETS[name];
+        if (!tokens) return;
+
+        // Clear all existing chip state
+        this._chipTokens.clear();
+        document.querySelectorAll('.qf-btn[data-filter]').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.qf-btn[data-preset]').forEach(b => b.classList.remove('active'));
+
+        if (tokens.length > 0) {
+            // Activate preset chips
+            for (const tok of tokens) {
+                this._chipTokens.add(tok);
+                // Highlight matching chip button if present
+                const btn = document.querySelector(`.qf-btn[data-filter="${CSS.escape(tok)}"]`);
+                if (btn) btn.classList.add('active');
+            }
+            // Highlight the preset button itself
+            const presetBtn = document.querySelector(`.qf-btn[data-preset="${name}"]`);
+            if (presetBtn) presetBtn.classList.add('active');
+        }
+        // "all" preset also clears manual text, device panel, and protocol filter
+        if (name === 'all') {
+            this._manualText = '';
+            const input = document.getElementById('filter-input');
+            if (input) input.value = '';
+            this.clearDevicePanel();
+            this._deselectedProtocols.clear();
+            document.querySelectorAll('.qf-proto').forEach(b => b.classList.add('active'));
+        }
+        this._apply();
     },
 
     _toggleChip(btn) {
         const token = btn.dataset.filter || '';
         if (!token) return;
+
+        // Deactivate any active preset button (chips override preset state)
+        document.querySelectorAll('.qf-btn[data-preset]').forEach(b => b.classList.remove('active'));
 
         if (this._chipTokens.has(token)) {
             this._chipTokens.delete(token);
@@ -62,6 +133,36 @@ const FilterPresets = {
         this._chipTokens.clear();
         document.querySelectorAll('.qf-btn').forEach(b => b.classList.remove('active'));
         this._apply();
+    },
+
+    // ── Protocol Multi-select ──────────────────────────────────────────────
+
+    _bindProtoChips() {
+        // Protocol chips: active = SHOWN (default all active). Click toggles exclusion.
+        document.querySelectorAll('.qf-proto').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const proto = btn.dataset.proto;
+                if (this._deselectedProtocols.has(proto)) {
+                    // Re-enable this protocol
+                    this._deselectedProtocols.delete(proto);
+                    btn.classList.add('active');
+                } else {
+                    // Exclude this protocol
+                    this._deselectedProtocols.add(proto);
+                    btn.classList.remove('active');
+                }
+                this._apply();
+            });
+        });
+
+        const selectAll = document.getElementById('btn-proto-select-all');
+        if (selectAll) {
+            selectAll.addEventListener('click', () => {
+                this._deselectedProtocols.clear();
+                document.querySelectorAll('.qf-proto').forEach(b => b.classList.add('active'));
+                this._apply();
+            });
+        }
     },
 
     // ── Manual Input ───────────────────────────────────────────────────────
@@ -176,12 +277,23 @@ const FilterPresets = {
     // ── Combined Apply ─────────────────────────────────────────────────────
 
     _apply() {
-        // Build combined filter string: chips ∪ manualText ∪ devicePanel
+        // Build combined filter string: chips ∪ manualText ∪ devicePanel ∪ protoFilter
         const parts = [];
 
         for (const tok of this._chipTokens) parts.push(tok);
         for (const tok of this._deviceTokens) parts.push(tok);
         if (this._manualText) parts.push(this._manualText);
+
+        // Protocol multi-select: if some protocols are deselected, build an OR regex
+        // matching only the selected ones.  When all selected → no condition added.
+        const allProtos = Array.from(document.querySelectorAll('.qf-proto'))
+            .map(b => b.dataset.proto);
+        if (this._deselectedProtocols.size > 0 && this._deselectedProtocols.size < allProtos.length) {
+            const selected = allProtos.filter(p => !this._deselectedProtocols.has(p));
+            if (selected.length > 0) {
+                parts.push(`protocol:^(${selected.join('|')})$`);
+            }
+        }
 
         const combined = parts.join(' ');
         this._combinedConditions = FilterEngine.parse(combined);
@@ -220,6 +332,7 @@ const FilterPresets = {
             const state = {
                 chips: Array.from(this._chipTokens),
                 manual: this._manualText,
+                deselectedProtos: Array.from(this._deselectedProtocols),
                 device: {
                     vid:      (document.getElementById('devf-vid')      || {}).value || '',
                     pid:      (document.getElementById('devf-pid')      || {}).value || '',
@@ -249,6 +362,17 @@ const FilterPresets = {
                     if (btn) {
                         this._chipTokens.add(token);
                         btn.classList.add('active');
+                    }
+                });
+            }
+
+            // Restore protocol deselection
+            if (Array.isArray(state.deselectedProtos)) {
+                state.deselectedProtos.forEach(proto => {
+                    const btn = document.querySelector(`.qf-proto[data-proto="${CSS.escape(proto)}"]`);
+                    if (btn) {
+                        this._deselectedProtocols.add(proto);
+                        btn.classList.remove('active');
                     }
                 });
             }

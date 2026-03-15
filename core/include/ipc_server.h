@@ -28,6 +28,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <map>
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -106,12 +107,20 @@ private:
     std::string DeviceInfoToJson(const BHPLUS_USB_DEVICE_INFO& device);
     std::string StatsToJson(const BHPLUS_STATS& stats);
 
+    // Populate m_deviceCache from CaptureEngine::EnumerateDevices()
+    // Call after any devices.list / usbpcap.rescan response.
+    void UpdateDeviceCache();
+
     CaptureEngine* m_engine = nullptr;
     std::atomic<bool> m_running{false};
     std::thread m_acceptThread;
     std::mutex m_clientsMutex;
     std::vector<std::unique_ptr<ClientContext>> m_clients;
     HANDLE m_stopEvent = nullptr;
+
+    // Device cache: (bus<<16|deviceAddr) -> device info, for enriching events
+    std::map<uint32_t, BHPLUS_USB_DEVICE_INFO> m_deviceCache;
+    std::mutex m_deviceCacheMutex;
 
     // Event batching: accumulate events, flush periodically
     static constexpr size_t BATCH_MAX_EVENTS = 200;

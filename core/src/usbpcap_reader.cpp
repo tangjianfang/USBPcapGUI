@@ -182,8 +182,22 @@ std::vector<RootHubInfo> EnumerateRootHubs() {
                             nullptr, 0,
                             symBuf, sizeof(symBuf),
                             &returned, nullptr)) {
-            info.hubSymLink = std::wstring(symBuf,
-                returned / sizeof(wchar_t));
+            // Strip NUL terminator(s) that USBPcap includes in the byte count
+            DWORD wchars = returned / sizeof(wchar_t);
+            while (wchars > 0 && symBuf[wchars - 1] == L'\0') --wchars;
+            std::wstring raw(symBuf, wchars);
+
+            // IOCTL_USBPCAP_GET_HUB_SYMLINK returns a kernel NT path that
+            // starts with \??\ (e.g. \??\USB#ROOT_HUB30#...).
+            // CreateFileW needs the Win32 device prefix \\.\  in its place.
+            static const wchar_t* kKernelPfx = L"\\??\\";
+            if (raw.size() > 4 && raw.compare(0, 4, kKernelPfx) == 0) {
+                info.hubSymLink = std::wstring(L"\\\\.\\") + raw.substr(4);
+            } else {
+                info.hubSymLink = std::move(raw);
+            }
+            spdlog::debug("[usbpcap] USBPcap{} hub symlink: {}", n,
+                std::string(info.hubSymLink.begin(), info.hubSymLink.end()));
         }
 
         CloseHandle(h);
@@ -262,10 +276,18 @@ std::vector<BHPLUS_USB_DEVICE_INFO> EnumerateUsbDevicesOnHub(
 
     if (hubSymLink.empty()) return devices;
 
+    // USB hub IOCTLs (IOCTL_USB_GET_NODE_*) require FILE_ANY_ACCESS; open with
+    // GENERIC_READ|GENERIC_WRITE and full share flags so enumeration can run
+    // even while a capture session holds the USBPcap device.
     HANDLE hHub = CreateFileW(hubSymLink.c_str(),
-        GENERIC_WRITE, FILE_SHARE_WRITE,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
         nullptr, OPEN_EXISTING, 0, nullptr);
-    if (hHub == INVALID_HANDLE_VALUE) return devices;
+    if (hHub == INVALID_HANDLE_VALUE) {
+        spdlog::debug("[usbpcap] EnumerateUsbDevicesOnHub: cannot open hub '{}' (err={})",
+            std::string(hubSymLink.begin(), hubSymLink.end()), GetLastError());
+        return devices;
+    }
 
     // Query number of ports
     USB_NODE_INFORMATION nodeInfo{};
@@ -301,7 +323,9 @@ std::vector<BHPLUS_USB_DEVICE_INFO> EnumerateUsbDevicesOnHub(
         dev.DeviceAddress = pConn->DeviceAddress;
         dev.VendorId      = pConn->DeviceDescriptor.idVendor;
         dev.ProductId     = pConn->DeviceDescriptor.idProduct;
-        dev.DeviceClass   = pConn->DeviceDescriptor.bDeviceClass;
+        dev.DeviceClass    = pConn->DeviceDescriptor.bDeviceClass;
+        dev.DeviceSubClass = pConn->DeviceDescriptor.bDeviceSubClass;
+        dev.DeviceProtocol = pConn->DeviceDescriptor.bDeviceProtocol;
 
         switch (pConn->Speed) {
             case UsbLowSpeed:    dev.Speed = BHPLUS_USB_SPEED_LOW;   break;
