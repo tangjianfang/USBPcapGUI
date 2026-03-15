@@ -142,15 +142,34 @@ Write-Host "[1/4] Found VS at: $vsRoot" -ForegroundColor Green
 # Step 2 – Build C++ (cmake + MSBuild)
 # ---------------------------------------------------------------------------
 
-# Kill any running output binaries so the linker can overwrite them
+# Kill any running output binaries so the linker can overwrite them.
+# NOTE: "node" is intentionally excluded — Stop-Process by name would kill ALL node.exe
+# instances system-wide (VS Code, other dev servers, etc.).  Instead we find node
+# processes whose command line references our project directory explicitly.
 $killedAny = $false
-@("USBPcapGUI", "bhplus-core", "bhplus-cli", "gui-server", "node") | ForEach-Object {
+@("USBPcapGUI", "bhplus-core", "bhplus-cli", "gui-server") | ForEach-Object {
     $procs = Get-Process $_ -ErrorAction SilentlyContinue
     if ($procs) {
         $procs | Stop-Process -Force
         $killedAny = $true
         Write-Host "  Stopped running process: $_" -ForegroundColor Yellow
     }
+}
+# Kill only node.exe processes that are running our gui server script (dev mode)
+try {
+    $rootNorm = $root.TrimEnd('\')
+    Get-WmiObject Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*$rootNorm*" } |
+        ForEach-Object {
+            $proc = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+            if ($proc) {
+                $proc | Stop-Process -Force
+                $killedAny = $true
+                Write-Host "  Stopped node.exe (our dev server, PID $($_.ProcessId))" -ForegroundColor Yellow
+            }
+        }
+} catch {
+    # WMI not available — skip targeted node kill
 }
 if ($killedAny) { Start-Sleep -Milliseconds 500 }
 
@@ -271,12 +290,18 @@ Write-Host ""
 Write-Host "[4/4] Assembling $distApp ..." -ForegroundColor Cyan
 
 if (Test-Path $distApp) {
-    # Release any file locks on the old dist folder before deleting
-    Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.MainModule.FileName -like "$distApp\*" } catch { $false }
-    } | ForEach-Object {
-        Write-Host "  Stopping process holding dist lock: $($_.Name)" -ForegroundColor Yellow
-        $_ | Stop-Process -Force
+    # Release file locks held by processes whose executable lives inside $distApp.
+    # We only target our own known binaries — avoids accidentally killing unrelated processes
+    # (e.g. terminal emulators whose cwd happens to be inside the dist folder).
+    $distAppNorm = $distApp.TrimEnd('\') + '\'
+    @("USBPcapGUI", "bhplus-core", "bhplus-cli", "gui-server") | ForEach-Object {
+        $procs = Get-Process $_ -ErrorAction SilentlyContinue | Where-Object {
+            try { $_.MainModule.FileName -like "$distAppNorm*" } catch { $false }
+        }
+        if ($procs) {
+            $procs | Stop-Process -Force
+            Write-Host "  Stopped dist process: $_ (was locking dist folder)" -ForegroundColor Yellow
+        }
     }
     Start-Sleep -Milliseconds 300
     Remove-Item -Recurse -Force $distApp
