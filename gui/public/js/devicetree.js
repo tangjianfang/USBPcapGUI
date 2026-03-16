@@ -52,13 +52,15 @@ const DeviceTree = {
     },
 
     /**
-     * Clear selection
+     * Clear selection. Pass _suppressHighlight=true when switching devices
+     * to avoid briefly clearing highlight before setting the new one.
      */
-    clearSelection() {
+    clearSelection(_suppressHighlight = false) {
         this._selectedDeviceId = null;
         this._container.querySelectorAll('.device-item.selected').forEach(el => {
             el.classList.remove('selected');
         });
+        if (!_suppressHighlight && window.CaptureTable) CaptureTable.highlightDevice(null);
     },
 
     /**
@@ -170,15 +172,18 @@ const DeviceTree = {
     },
 
     _onSelect(deviceId, itemEl) {
-        // Toggle selection
+        // Toggle selection: clicking the same device deselects and clears highlight
         if (this._selectedDeviceId === deviceId) {
             this.clearSelection();
             return;
         }
 
-        this.clearSelection();
+        // Suppress highlight reset while switching — we'll set it below
+        this.clearSelection(true);
         this._selectedDeviceId = deviceId;
         itemEl.classList.add('selected');
+
+        if (window.CaptureTable) CaptureTable.highlightDevice(deviceId);
 
         if (window.App && window.App.onDeviceSelected) {
             const dev = this._devices.find(d => d.id === deviceId);

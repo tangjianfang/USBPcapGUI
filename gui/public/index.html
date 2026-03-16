@@ -54,15 +54,58 @@
 
         <!-- Center: Capture Table + Detail -->
         <div id="center-panel">
-            <!-- Filter Bar -->
+            <!-- Filter Bar (Row 1) -->
             <div id="filter-bar">
                 <input type="text" id="filter-input" placeholder="Filter: protocol:USB command:GET_DESCRIPTOR status:!STALL data:ff01..." spellcheck="false">
                 <button id="btn-filter-apply" class="btn btn-sm">Apply</button>
-                <button id="btn-filter-clear" class="btn btn-sm">Clear</button>
                 <span id="filter-count"></span>
+                <div id="device-filter-popover-wrap" style="position:relative">
+                    <button id="btn-devfilter-toggle" class="btn btn-sm" title="Device Filter">⊞ Device</button>
+                    <div id="device-filter-panel" class="device-filter-popover hidden">
+                        <div class="device-filter-body">
+                            <label class="devf-field">
+                                <span>VID (hex)</span>
+                                <input type="text" id="devf-vid" maxlength="4" placeholder="046D" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>PID (hex)</span>
+                                <input type="text" id="devf-pid" maxlength="4" placeholder="C52B" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>Class</span>
+                                <input type="text" id="devf-class" maxlength="3" placeholder="3" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>SubClass</span>
+                                <input type="text" id="devf-subclass" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>Bus</span>
+                                <input type="text" id="devf-bus" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>Addr</span>
+                                <input type="text" id="devf-addr" maxlength="3" placeholder="5" class="mono devf-input" spellcheck="false">
+                            </label>
+                            <label class="devf-field">
+                                <span>方向</span>
+                                <select id="devf-dir" class="devf-input">
+                                    <option value="">不限</option>
+                                    <option value=">>>">OUT (Host→Dev)</option>
+                                    <option value="<<<">IN  (Dev→Host)</option>
+                                </select>
+                            </label>
+                            <div class="devf-actions">
+                                <button id="btn-devfilter-apply" class="btn btn-sm btn-primary">应用</button>
+                                <button id="btn-devfilter-clear" class="btn btn-sm">清除</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button class="qf-btn qf-clear" id="btn-qf-clear-all" title="清除所有过滤条件">✕ Reset All</button>
             </div>
 
-            <!-- Quick Filter Chips -->
+            <!-- Quick Filter Chips (Row 2) — chips + protocol chips merged -->
             <div id="quick-filter-chips">
                 <!-- Preset actions (exclusive) -->
                 <button class="qf-btn qf-preset" data-preset="all"       title="显示全部，清除所有过滤条件">全部</button>
@@ -73,20 +116,13 @@
                 <button class="qf-btn" data-filter="direction:>>>">OUT ►</button>
                 <button class="qf-btn" data-filter="direction:<<<">◄ IN</button>
                 <span class="qf-divider"></span>
-                <!-- Data presence -->
+                <!-- Data presence + transfer type -->
                 <button class="qf-btn" data-filter="len:>0">有数据</button>
-                <span class="qf-divider"></span>
-                <!-- Transfer type -->
                 <button class="qf-btn" data-filter="command:CONTROL_TRANSFER">控制</button>
                 <button class="qf-btn" data-filter="command:BULK_OR_INTERRUPT">批量/中断</button>
                 <button class="qf-btn" data-filter="status:STALL">STALL</button>
-                <!-- Spacer + clear-all -->
-                <span class="qf-spacer"></span>
-                <button class="qf-btn qf-clear" id="btn-qf-clear-all" title="清除所有过滤条件">✕ 取消</button>
-            </div>
-
-            <!-- Protocol Filter (multi-select: all ON by default, click to exclude) -->
-            <div id="proto-filter-bar">
+                <span class="qf-divider"></span>
+                <!-- Protocol chips -->
                 <span class="qf-label pf-label">协议:</span>
                 <button class="qf-btn qf-proto active" data-proto="USB"      title="USB (通用)">USB</button>
                 <button class="qf-btn qf-proto active" data-proto="HID"      title="HID 人机接口 (鼠标/键盘)">HID</button>
@@ -99,52 +135,6 @@
                 <span class="qf-spacer"></span>
                 <button class="qf-btn qf-clear" id="btn-proto-select-all" title="显示所有协议">全选</button>
             </div>
-
-            <!-- Device Filter Panel -->
-            <details id="device-filter-panel" class="device-filter-panel">
-                <summary class="device-filter-summary">
-                    <span>设备过滤</span>
-                    <span class="devf-hint">VID / PID / Class / 地址</span>
-                </summary>
-                <div class="device-filter-body">
-                    <label class="devf-field">
-                        <span>VID (hex)</span>
-                        <input type="text" id="devf-vid" maxlength="4" placeholder="046D" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>PID (hex)</span>
-                        <input type="text" id="devf-pid" maxlength="4" placeholder="C52B" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>Class</span>
-                        <input type="text" id="devf-class" maxlength="3" placeholder="3" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>SubClass</span>
-                        <input type="text" id="devf-subclass" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>Bus</span>
-                        <input type="text" id="devf-bus" maxlength="3" placeholder="1" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>Addr</span>
-                        <input type="text" id="devf-addr" maxlength="3" placeholder="5" class="mono devf-input" spellcheck="false">
-                    </label>
-                    <label class="devf-field">
-                        <span>方向</span>
-                        <select id="devf-dir" class="devf-input">
-                            <option value="">不限</option>
-                            <option value=">>>">OUT (Host→Dev)</option>
-                            <option value="<<<">IN  (Dev→Host)</option>
-                        </select>
-                    </label>
-                    <div class="devf-actions">
-                        <button id="btn-devfilter-apply" class="btn btn-sm btn-primary">应用</button>
-                        <button id="btn-devfilter-clear" class="btn btn-sm">清除</button>
-                    </div>
-                </div>
-            </details>
 
             <!-- Capture Table -->
             <div id="capture-table-container" class="panel">

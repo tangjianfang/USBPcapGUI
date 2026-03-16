@@ -652,6 +652,7 @@ const App = {
         if (statusDevice && device) {
             statusDevice.textContent = device.name || `Device ${device.id}`;
         }
+        if (window.CaptureTable) CaptureTable.highlightDevice(device ? device.id : null);
     },
 
     // ---- Stats ----

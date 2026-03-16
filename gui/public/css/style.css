@@ -238,6 +238,9 @@ html, body {
     gap: 6px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
+    overflow: visible;
+    position: relative;
+    z-index: 10;
 }
 
 #filter-input {
@@ -305,63 +308,29 @@ html, body {
 /* Spacer pushes clear-all to the right end */
 .qf-spacer { flex: 1; }
 
-/* ── Protocol Filter Bar ── */
-#proto-filter-bar {
-    display: flex;
-    align-items: center;
-    padding: 2px 8px;
-    gap: 4px;
-    background: var(--bg-primary);
-    border-bottom: 1px solid var(--border-color);
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    flex-shrink: 0;
-}
-#proto-filter-bar::-webkit-scrollbar { display: none; }
+/* ── Protocol chips (in unified chip bar) ── */
 .pf-label { font-size: 10px; color: var(--text-secondary); flex-shrink: 0; white-space: nowrap; }
 .qf-proto.active {
     background: rgba(0, 120, 212, 0.15);
     color: var(--accent, #0078d4);
     border-color: rgba(0, 120, 212, 0.5);
 }
-.qf-proto:not(.active) {
-    opacity: 0.45;
-}
+.qf-proto:not(.active) { opacity: 0.45; }
+.qf-proto:hover { opacity: 1; background: var(--bg-hover); color: var(--text-primary); }
 
-/* ── Device Filter Panel ── */
-.device-filter-panel {
+/* ── Device Filter Popover ── */
+.device-filter-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 200;
+    min-width: 420px;
     background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
-.device-filter-summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 3px 10px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    cursor: pointer;
-    user-select: none;
-    list-style: none;
-}
-.device-filter-summary::-webkit-details-marker { display: none; }
-.device-filter-summary::before {
-    content: '▶';
-    font-size: 9px;
-    color: var(--text-secondary);
-    transition: transform 0.15s;
-}
-.device-filter-panel[open] > .device-filter-summary::before { transform: rotate(90deg); }
-.device-filter-summary:hover { color: var(--text-primary); }
-.devf-hint {
-    font-size: 10px;
-    font-weight: normal;
-    color: var(--text-dim, #666);
-    margin-left: auto;
-}
+.device-filter-popover.hidden { display: none; }
 .device-filter-body {
     display: flex;
     flex-wrap: wrap;
@@ -475,6 +444,9 @@ select.devf-input { width: 130px; }
 .capture-row:nth-child(even) { background: rgba(255,255,255, 0.015); }
 .capture-row:nth-child(even):hover { background: var(--bg-hover); }
 .capture-row:nth-child(even).selected { background: var(--bg-selected); }
+.capture-row.row-highlighted           { background: rgba(255,200,50,0.10); border-left: 2px solid rgba(255,200,50,0.55); }
+.capture-row.row-highlighted:hover     { background: rgba(255,200,50,0.18); }
+.capture-row.row-highlighted.selected  { background: var(--bg-selected); border-left: 2px solid var(--accent); }
 
 .capture-row .cell { overflow: hidden; text-overflow: ellipsis; padding-right: 8px; flex-shrink: 0; }
 .capture-row .cell-seq  { width: 55px;  min-width: 55px;  color: var(--text-secondary); }

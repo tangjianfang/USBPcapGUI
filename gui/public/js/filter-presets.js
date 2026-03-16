@@ -38,6 +38,7 @@ const FilterPresets = {
         this._bindProtoChips();
         this._bindManualInput();
         this._bindDevicePanel();
+        this._bindDeviceFilterPopover();
         this._loadFromStorage();
     },
 
@@ -169,7 +170,6 @@ const FilterPresets = {
     _bindManualInput() {
         const input = document.getElementById('filter-input');
         const btnApply = document.getElementById('btn-filter-apply');
-        const btnClear = document.getElementById('btn-filter-clear');
         if (!input) return;
 
         let debounce = null;
@@ -201,15 +201,31 @@ const FilterPresets = {
             });
         }
 
-        if (btnClear) {
-            btnClear.addEventListener('click', () => {
-                input.value = '';
-                this._manualText = '';
-                this.clearChips();
-                this.clearDevicePanel();
-                this._apply();
-            });
-        }
+    },
+
+    // ── Device Filter Popover ──────────────────────────────────────────────
+
+    _bindDeviceFilterPopover() {
+        const toggleBtn = document.getElementById('btn-devfilter-toggle');
+        const panel     = document.getElementById('device-filter-panel');
+        if (!toggleBtn || !panel) return;
+
+        toggleBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            const opening = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !opening);
+            toggleBtn.classList.toggle('active', opening);
+        });
+
+        document.addEventListener('click', e => {
+            if (!panel.classList.contains('hidden') &&
+                !panel.contains(e.target) && e.target !== toggleBtn) {
+                panel.classList.add('hidden');
+                toggleBtn.classList.remove('active');
+            }
+        });
+
+        panel.addEventListener('click', e => e.stopPropagation());
     },
 
     // ── Device Filter Panel ────────────────────────────────────────────────
@@ -226,6 +242,8 @@ const FilterPresets = {
             this._collectDevicePanel();
             this._apply();
             this._saveToStorage();
+            document.getElementById('device-filter-panel')?.classList.add('hidden');
+            document.getElementById('btn-devfilter-toggle')?.classList.remove('active');
         });
 
         const btnClear = document.getElementById('btn-devfilter-clear');
@@ -429,9 +447,10 @@ const FilterPresets = {
         if (dev.subClass) set('devf-subclass', dev.subClass);
         if (dev.bus)  set('devf-bus',  dev.bus);
 
-        // Expand panel if collapsed
+        // Open popover
         const panel = document.getElementById('device-filter-panel');
-        if (panel) panel.classList.remove('collapsed');
+        panel?.classList.remove('hidden');
+        document.getElementById('btn-devfilter-toggle')?.classList.add('active');
 
         this._collectDevicePanel();
     }

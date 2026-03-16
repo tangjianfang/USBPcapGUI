@@ -20,6 +20,7 @@ const CaptureTable = {
     filterConditions: [],
     _composite: { chips: [], fixed: [] },
     selectedIndex: -1,    // index in filteredEvents
+    _highlightedDeviceId: null,
     autoScroll: true,
     capturing: false,
 
@@ -151,6 +152,7 @@ const CaptureTable = {
         this.allEvents = [];
         this.filteredEvents = [];
         this.selectedIndex = -1;
+        this._highlightedDeviceId = null;
         this._renderedRange = { start: -1, end: -1 };
         this._scrollContent.innerHTML = '';
         this._scrollContent.style.height = '0px';
@@ -179,6 +181,16 @@ const CaptureTable = {
         this.filterConditions = conditions || [];
         this._composite = { chips: [], fixed: this.filterConditions };
         this._refilter();
+    },
+
+    /**
+     * Highlight all rows belonging to a device (amber tint, no filter).
+     * Pass null to clear highlighting.
+     */
+    highlightDevice(deviceId) {
+        this._highlightedDeviceId = deviceId ?? null;
+        this._renderedRange = { start: -1, end: -1 };
+        this._renderVisible();
     },
 
     /**
@@ -345,6 +357,13 @@ const CaptureTable = {
         const row = document.createElement('div');
         row.className = 'capture-row';
         if (index === this.selectedIndex) row.classList.add('selected');
+        if (this._highlightedDeviceId !== null) {
+            const bus  = typeof event.bus    === 'number' ? event.bus    : parseInt(event.bus,    10);
+            const addr = typeof event.device === 'number' ? event.device : parseInt(event.device, 10);
+            if (!isNaN(bus) && !isNaN(addr) && ((bus << 16) | addr) === this._highlightedDeviceId) {
+                row.classList.add('row-highlighted');
+            }
+        }
         row.dataset.index = index;
         row.style.position = 'absolute';
         row.style.top = (index * this.ROW_HEIGHT) + 'px';
