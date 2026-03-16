@@ -294,14 +294,9 @@ const FilterPresets = {
     // ── Combined Apply ─────────────────────────────────────────────────────
 
     _apply() {
-        // Chip groups: each toggled chip is its own AND-group, evaluated as OR between chips.
-        // e.g. clicking "OUT ►" + "◄ IN" shows events going either direction.
-        const chipGroups = Array.from(this._chipTokens)
-            .map(tok => FilterEngine.parse(tok))
-            .filter(c => c.length > 0);
-
-        // Fixed conditions: preset + device panel + manual text + protocol filter (all AND).
+        // All conditions (chips + preset + device panel + manual + protocol) are AND'd together.
         const fixedParts = [];
+        for (const tok of this._chipTokens) { if (tok) fixedParts.push(tok); }
         if (this._presetText) fixedParts.push(this._presetText);
         for (const tok of this._deviceTokens) fixedParts.push(tok);
         if (this._manualText) fixedParts.push(this._manualText);
@@ -319,7 +314,7 @@ const FilterPresets = {
         const fixedConditions = FilterEngine.parse(fixedParts.join(' '));
         this._combinedConditions = fixedConditions;
 
-        const composite = { chips: chipGroups, fixed: fixedConditions };
+        const composite = { chips: [], fixed: fixedConditions };
         if (window.CaptureTable) {
             CaptureTable.applyComposite(composite);
         }
