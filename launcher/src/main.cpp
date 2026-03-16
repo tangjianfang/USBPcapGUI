@@ -43,10 +43,27 @@ static HINSTANCE g_hInst          = nullptr;
 static HWND      g_hWnd           = nullptr;
 static HANDLE    g_coreProcess    = INVALID_HANDLE_VALUE;
 static HANDLE    g_serverProcess  = INVALID_HANDLE_VALUE;
+static HANDLE    g_hJob           = nullptr;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Create a Job Object that kills all assigned processes when closed.
+static HANDLE CreateKillOnCloseJob()
+{
+    HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
+    if (!hJob) return nullptr;
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = {};
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation,
+                                  &info, sizeof(info))) {
+        CloseHandle(hJob);
+        return nullptr;
+    }
+    return hJob;
+}
 
 static std::wstring GetExeDir()
 {
@@ -191,6 +208,8 @@ static void Cleanup()
 {
     RemoveTrayIcon();
 
+    // Try graceful shutdown first (CTRL_BREAK gives bhplus-core a chance to
+    // clean up capture state and flush logs).
     if (g_serverProcess != INVALID_HANDLE_VALUE) {
         GracefulTerminate(g_serverProcess);
         CloseHandle(g_serverProcess);
@@ -201,6 +220,13 @@ static void Cleanup()
         GracefulTerminate(g_coreProcess);
         CloseHandle(g_coreProcess);
         g_coreProcess = INVALID_HANDLE_VALUE;
+    }
+
+    // Closing the Job Object kills any remaining descendants (USBPcapCMD.exe
+    // and others) that survived the graceful shutdown above.
+    if (g_hJob) {
+        CloseHandle(g_hJob);
+        g_hJob = nullptr;
     }
 }
 
@@ -279,6 +305,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE /*hPrevInst*/, LPWSTR /*lpCmdLine
 
     const std::wstring dir = GetExeDir();
 
+    // Create a Job Object so all child processes (and their children, e.g.
+    // USBPcapCMD.exe) are terminated when the launcher exits.
+    g_hJob = CreateKillOnCloseJob();
+
     // ------------------------------------------------------------------
     // 1. Start the C++ capture-engine service
     // ------------------------------------------------------------------
@@ -297,6 +327,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE /*hPrevInst*/, LPWSTR /*lpCmdLine
                     APP_NAME, MB_ICONERROR);
         return 1;
     }
+    if (g_hJob) AssignProcessToJobObject(g_hJob, g_coreProcess);
 
     Sleep(CORE_WAIT_MS);
 
@@ -353,6 +384,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE /*hPrevInst*/, LPWSTR /*lpCmdLine
             return 1;
         }
     }
+    if (g_hJob) AssignProcessToJobObject(g_hJob, g_serverProcess);
 
     Sleep(SERVER_WAIT_MS);
 
