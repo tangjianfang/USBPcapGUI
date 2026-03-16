@@ -2,6 +2,6 @@
   "major": 1,
   "minor": 0,
   "patch": 0,
-  "build": 31,
+  "build": 32,
   "_comment": "Build number auto-increments on every successful package.ps1 run. Use -BumpPatch / -BumpMinor / -BumpMajor in package.ps1 for larger releases."
 }
