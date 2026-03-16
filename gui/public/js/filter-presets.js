@@ -19,16 +19,18 @@ const FilterPresets = {
 
     STORAGE_KEY: 'usbpcap_filter_state',
 
-    // Active chip filter tokens — multi-select, each is a filter string token
+    // Active chip filter tokens — multi-select toggle buttons; evaluated as OR between chips
     _chipTokens: new Set(),
-    // Manual text input
+    // Preset fixed conditions text (e.g. "command:CONTROL_TRANSFER len:>0"); evaluated as AND
+    _presetText: '',
+    // Manual text input — evaluated as AND
     _manualText: '',
-    // Device panel filter tokens
+    // Device panel filter tokens — evaluated as AND
     _deviceTokens: [],
     // Protocol multi-select: set of DESELECTED protocol names (empty = show all)
     _deselectedProtocols: new Set(),
 
-    // Cached parsed conditions (performance: avoid re-parsing on every row)
+    // Cached parsed fixed conditions (for badge / describe)
     _combinedConditions: [],
 
     init() {
@@ -63,7 +65,7 @@ const FilterPresets = {
             btn.addEventListener('click', () => this._applyPreset(btn.dataset.preset));
         });
 
-        // Clear-all button: reset all filters including protocol
+        // Clear-all button: reset all filters including protocol and preset
         const clearAll = document.getElementById('btn-qf-clear-all');
         if (clearAll) {
             clearAll.addEventListener('click', () => {
@@ -72,6 +74,7 @@ const FilterPresets = {
                 const input = document.getElementById('filter-input');
                 if (input) input.value = '';
                 this._manualText = '';
+                this._presetText = '';
                 this._deselectedProtocols.clear();
                 document.querySelectorAll('.qf-proto').forEach(b => b.classList.add('active'));
                 this._apply();
@@ -83,25 +86,20 @@ const FilterPresets = {
         const tokens = this.PRESETS[name];
         if (!tokens) return;
 
-        // Clear all existing chip state
+        // Clear individual chip toggles — presets are separate from chips
         this._chipTokens.clear();
         document.querySelectorAll('.qf-btn[data-filter]').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.qf-btn[data-preset]').forEach(b => b.classList.remove('active'));
 
-        if (tokens.length > 0) {
-            // Activate preset chips
-            for (const tok of tokens) {
-                this._chipTokens.add(tok);
-                // Highlight matching chip button if present
-                const btn = document.querySelector(`.qf-btn[data-filter="${CSS.escape(tok)}"]`);
-                if (btn) btn.classList.add('active');
-            }
-            // Highlight the preset button itself
-            const presetBtn = document.querySelector(`.qf-btn[data-preset="${name}"]`);
-            if (presetBtn) presetBtn.classList.add('active');
-        }
-        // "all" preset also clears manual text, device panel, and protocol filter
+        // Preset conditions are stored as a fixed AND-group (not OR'd with chips)
+        this._presetText = tokens.join(' ');
+
+        const presetBtn = document.querySelector(`.qf-btn[data-preset="${name}"]`);
+        if (presetBtn) presetBtn.classList.add('active');
+
+        // "all" preset clears everything
         if (name === 'all') {
+            this._presetText = '';
             this._manualText = '';
             const input = document.getElementById('filter-input');
             if (input) input.value = '';
@@ -131,6 +129,7 @@ const FilterPresets = {
 
     clearChips() {
         this._chipTokens.clear();
+        this._presetText = '';
         document.querySelectorAll('.qf-btn').forEach(b => b.classList.remove('active'));
         this._apply();
     },
@@ -277,32 +276,37 @@ const FilterPresets = {
     // ── Combined Apply ─────────────────────────────────────────────────────
 
     _apply() {
-        // Build combined filter string: chips ∪ manualText ∪ devicePanel ∪ protoFilter
-        const parts = [];
+        // Chip groups: each toggled chip is its own AND-group, evaluated as OR between chips.
+        // e.g. clicking "OUT ►" + "◄ IN" shows events going either direction.
+        const chipGroups = Array.from(this._chipTokens)
+            .map(tok => FilterEngine.parse(tok))
+            .filter(c => c.length > 0);
 
-        for (const tok of this._chipTokens) parts.push(tok);
-        for (const tok of this._deviceTokens) parts.push(tok);
-        if (this._manualText) parts.push(this._manualText);
+        // Fixed conditions: preset + device panel + manual text + protocol filter (all AND).
+        const fixedParts = [];
+        if (this._presetText) fixedParts.push(this._presetText);
+        for (const tok of this._deviceTokens) fixedParts.push(tok);
+        if (this._manualText) fixedParts.push(this._manualText);
 
-        // Protocol multi-select: if some protocols are deselected, build an OR regex
-        // matching only the selected ones.  When all selected → no condition added.
+        // Protocol multi-select: OR regex over selected protocols.
         const allProtos = Array.from(document.querySelectorAll('.qf-proto'))
             .map(b => b.dataset.proto);
         if (this._deselectedProtocols.size > 0 && this._deselectedProtocols.size < allProtos.length) {
             const selected = allProtos.filter(p => !this._deselectedProtocols.has(p));
             if (selected.length > 0) {
-                parts.push(`protocol:^(${selected.join('|')})$`);
+                fixedParts.push(`protocol:^(${selected.join('|')})$`);
             }
         }
 
-        const combined = parts.join(' ');
-        this._combinedConditions = FilterEngine.parse(combined);
+        const fixedConditions = FilterEngine.parse(fixedParts.join(' '));
+        this._combinedConditions = fixedConditions;
 
+        const composite = { chips: chipGroups, fixed: fixedConditions };
         if (window.CaptureTable) {
-            CaptureTable.applyConditions(this._combinedConditions, combined);
+            CaptureTable.applyComposite(composite);
         }
 
-        this._updateFilterSummary(combined);
+        this._updateFilterSummary(composite);
         this._saveToStorage();
     },
 
@@ -312,16 +316,18 @@ const FilterPresets = {
 
     // ── Filter Summary Badge ───────────────────────────────────────────────
 
-    _updateFilterSummary(combined) {
+    _updateFilterSummary(composite) {
         const badge = document.getElementById('filter-count');
         if (!badge) return;
-        const count = this._combinedConditions.length;
-        if (count === 0) {
+        const chipCount = composite.chips ? composite.chips.length : 0;
+        const fixedCount = composite.fixed ? composite.fixed.length : 0;
+        const total = chipCount + fixedCount;
+        if (total === 0) {
             badge.textContent = '';
             badge.title = '';
         } else {
-            badge.textContent = `${count} filter${count > 1 ? 's' : ''}`;
-            badge.title = FilterEngine.describe(this._combinedConditions);
+            badge.textContent = `${total} filter${total > 1 ? 's' : ''}`;
+            badge.title = FilterEngine.describeComposite(composite);
         }
     },
 
@@ -332,6 +338,7 @@ const FilterPresets = {
             const state = {
                 chips: Array.from(this._chipTokens),
                 manual: this._manualText,
+                presetText: this._presetText,
                 deselectedProtos: Array.from(this._deselectedProtocols),
                 device: {
                     vid:      (document.getElementById('devf-vid')      || {}).value || '',
@@ -375,6 +382,11 @@ const FilterPresets = {
                         btn.classList.remove('active');
                     }
                 });
+            }
+
+            // Restore preset
+            if (state.presetText) {
+                this._presetText = state.presetText;
             }
 
             // Restore manual input

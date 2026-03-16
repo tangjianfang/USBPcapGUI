@@ -18,6 +18,7 @@ const CaptureTable = {
     allEvents: [],
     filteredEvents: [],
     filterConditions: [],
+    _composite: { chips: [], fixed: [] },
     selectedIndex: -1,    // index in filteredEvents
     autoScroll: true,
     capturing: false,
@@ -102,7 +103,7 @@ const CaptureTable = {
         this.allEvents.push(event);
 
         // Check if it passes filter
-        if (FilterEngine.matches(event, this.filterConditions)) {
+        if (FilterEngine.matchesComposite(event, this._composite)) {
             this.filteredEvents.push(event);
             this._updateScrollHeight();
             this._updateStatus();
@@ -129,7 +130,7 @@ const CaptureTable = {
 
         this.allEvents.push(...events);
 
-        const passing = events.filter(e => FilterEngine.matches(e, this.filterConditions));
+        const passing = events.filter(e => FilterEngine.matchesComposite(e, this._composite));
         if (passing.length > 0) {
             this.filteredEvents.push(...passing);
             this._updateScrollHeight();
@@ -167,14 +168,25 @@ const CaptureTable = {
      */
     setFilter(filterStr) {
         this.filterConditions = FilterEngine.parse(filterStr);
+        this._composite = { chips: [], fixed: this.filterConditions };
         this._refilter();
     },
 
     /**
-     * Apply pre-parsed conditions directly (used by FilterPresets)
+     * Apply pre-parsed conditions directly (legacy path, chips treated as fixed AND)
      */
     applyConditions(conditions, _rawStr) {
         this.filterConditions = conditions || [];
+        this._composite = { chips: [], fixed: this.filterConditions };
+        this._refilter();
+    },
+
+    /**
+     * Apply composite filter: chips=OR groups, fixed=AND conditions (used by FilterPresets)
+     */
+    applyComposite(composite) {
+        this._composite = composite || { chips: [], fixed: [] };
+        this.filterConditions = this._composite.fixed || [];
         this._refilter();
     },
 
@@ -182,7 +194,7 @@ const CaptureTable = {
      * Re-apply current filter to all events
      */
     _refilter() {
-        this.filteredEvents = FilterEngine.apply(this.allEvents, this.filterConditions);
+        this.filteredEvents = FilterEngine.applyComposite(this.allEvents, this._composite);
         this.selectedIndex = -1;
         this._renderedRange = { start: -1, end: -1 };
         this._scrollContent.innerHTML = '';
@@ -352,6 +364,20 @@ const CaptureTable = {
                 : event.deviceName;
         } else if (event.vidHex && event.pidHex) {
             devName = `${event.vidHex}:${event.pidHex}`;
+        } else if (window.DeviceTree && Array.isArray(DeviceTree._devices)) {
+            // Fallback: look up device name from browser-side DeviceTree cache
+            const bus = typeof event.bus === 'number' ? event.bus : parseInt(event.bus, 10);
+            const addr = typeof event.device === 'number' ? event.device : parseInt(event.device, 10);
+            if (!isNaN(bus) && !isNaN(addr)) {
+                const di = DeviceTree._devices.find(d => d.bus === bus && d.device === addr);
+                if (di) {
+                    const v = di.vidHex || (di.vid ? di.vid.toString(16).toUpperCase().padStart(4,'0') : '');
+                    const p = di.pidHex || (di.pid ? di.pid.toString(16).toUpperCase().padStart(4,'0') : '');
+                    devName = di.name
+                        ? (v && p ? `${di.name} (${v}:${p})` : di.name)
+                        : (v && p ? `${v}:${p}` : devName);
+                }
+            }
         }
         const source = isDown ? 'host' : devName;
         const dest   = isDown ? devName : 'host';

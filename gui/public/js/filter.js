@@ -164,6 +164,44 @@ const FilterEngine = {
         return events.filter(e => this.matches(e, conditions));
     },
 
+    /**
+     * Test an event against a composite filter:
+     *   composite.chips — array of condition-arrays, evaluated as OR (pass if ANY chip matches)
+     *   composite.fixed — flat condition array, evaluated as AND
+     * Both must pass (chip-OR result AND fixed-AND result).
+     */
+    matchesComposite(event, composite) {
+        if (!composite) return true;
+        const { chips, fixed } = composite;
+        if (chips && chips.length > 0) {
+            if (!chips.some(conds => this.matches(event, conds))) return false;
+        }
+        if (fixed && fixed.length > 0) {
+            if (!this.matches(event, fixed)) return false;
+        }
+        return true;
+    },
+
+    applyComposite(events, composite) {
+        if (!composite) return events;
+        const hasChips = composite.chips && composite.chips.length > 0;
+        const hasFixed = composite.fixed && composite.fixed.length > 0;
+        if (!hasChips && !hasFixed) return events;
+        return events.filter(e => this.matchesComposite(e, composite));
+    },
+
+    describeComposite(composite) {
+        const parts = [];
+        if (composite.chips && composite.chips.length > 0) {
+            const chipDescs = composite.chips.map(conds => this.describe(conds));
+            parts.push(chipDescs.length > 1 ? `(${chipDescs.join(' OR ')})` : chipDescs[0]);
+        }
+        if (composite.fixed && composite.fixed.length > 0) {
+            parts.push(this.describe(composite.fixed));
+        }
+        return parts.join(' AND ');
+    },
+
     // ── Internal helpers ──
 
     _strMatch(fieldValue, pattern) {

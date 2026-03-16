@@ -660,6 +660,22 @@ app.get('/api/export/:format', (req, res) => {
 
 // --- Core Bridge Events ---
 
+// --- Device list change polling (USB plug/unplug detection) ---
+let _lastDevicesJson = '';
+let _devicePollTimer = null;
+
+async function pollDevices() {
+    if (!core.connected || wsClients.size === 0) return;
+    try {
+        const devices = await core.request('devices.list');
+        const json = JSON.stringify(devices);
+        if (json !== _lastDevicesJson) {
+            _lastDevicesJson = json;
+            broadcast({ type: 'devices.list', data: devices });
+        }
+    } catch (_) {}
+}
+
 // --- Event batching for WebSocket broadcast ---
 let wsBatchBuffer = [];
 let wsBatchTimer = null;
@@ -704,11 +720,18 @@ core.on('connected', async () => {
     // Push device list so the browser refreshes the device tree automatically
     try {
         const devices = await core.request('devices.list');
+        _lastDevicesJson = JSON.stringify(devices);
         broadcast({ type: 'devices.list', data: devices });
     } catch (_) {}
+    // Start polling for device changes (plug/unplug detection)
+    if (!_devicePollTimer) {
+        _devicePollTimer = setInterval(pollDevices, 3000);
+    }
 });
 
 core.on('disconnected', () => {
+    if (_devicePollTimer) { clearInterval(_devicePollTimer); _devicePollTimer = null; }
+    _lastDevicesJson = '';
     broadcast({ type: 'status', data: { coreConnected: false, demoMode: false } });
 });
 
