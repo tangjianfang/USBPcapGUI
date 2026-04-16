@@ -5,8 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>USBPcapGUI</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/setup.css">
 </head>
 <body>
+    <!-- Setup Guide Banner (shown when dependencies are missing) -->
+    <section id="setup-banner" class="setup-banner hidden">
+        <div class="setup-banner-text">
+            <span>💡</span>
+            <span id="setup-banner-msg">部分依赖组件未安装，某些功能可能受限。</span>
+        </div>
+        <div class="setup-banner-actions">
+            <a href="/setup.html" class="btn btn-sm btn-info">📋 查看配置向导</a>
+            <button id="btn-dismiss-setup" class="btn btn-sm" title="关闭">✕</button>
+        </div>
+    </section>
+
     <!-- Top Toolbar -->
     <header id="toolbar">
         <div class="toolbar-left">
