@@ -677,12 +677,14 @@ app.get('/api/health', async (_req, res) => {
             },
             visualStudio: {
                 name: 'Visual Studio 2022 (C++ 构建工具)',
-                required: '编译 C++ 核心时需要',
+                required: false,
+                note: '编译 C++ 核心时需要',
                 downloadUrl: 'https://visualstudio.microsoft.com/downloads/'
             },
             vcpkg: {
                 name: 'vcpkg (C++ 包管理器)',
-                required: '编译 C++ 核心时需要',
+                required: false,
+                note: '编译 C++ 核心时需要',
                 downloadUrl: 'https://github.com/microsoft/vcpkg'
             }
         }

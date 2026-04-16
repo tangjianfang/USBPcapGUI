@@ -195,7 +195,7 @@ npm start</pre>
                 <span class="qs-num">4</span>
                 <div>
                     <strong>安装 USBPcap（可选）</strong>
-                    <p>如果需要真实 USB 抓包，安装 <a href="https://desowin.org/usbpcap/" target="_blank">USBPcap</a>。 不安装也可使用 Demo 模式体验功能。</p>
+                    <p>如果需要真实 USB 抓包，安装 <a href="https://desowin.org/usbpcap/" target="_blank">USBPcap</a>。不安装也可使用 Demo 模式体验功能。</p>
                 </div>
             </div>
         </div>
@@ -241,9 +241,10 @@ npm start</pre>
     function renderStatus(data) {
         const statusEl = document.getElementById('setup-status');
         const deps = data.dependencies;
+        const usbInstalled = !!(data.usbpcap && data.usbpcap.installed);
 
         // Overall status
-        const allGood = deps.nodejs.installed && data.core.exeFound && (data.usbpcap && data.usbpcap.installed);
+        const allGood = deps.nodejs.installed && data.core.exeFound && usbInstalled;
         const partial = deps.nodejs.installed;
 
         if (allGood) {
@@ -269,7 +270,6 @@ npm start</pre>
         setStep('npm', true, '依赖已安装（服务器运行中）');
 
         // USBPcap
-        const usbInstalled = data.usbpcap && data.usbpcap.installed;
         setStep('usbpcap', usbInstalled,
             usbInstalled ? '已安装' : '未安装（可使用 Demo 模式）');
         document.getElementById('usbpcap-status-text').textContent =
