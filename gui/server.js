@@ -89,6 +89,11 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Convenience route: /setup → setup.html
+app.get('/setup', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'setup.html'));
+});
+
 const server = http.createServer(app);
 
 // --- Core Bridge ---
@@ -615,6 +620,73 @@ app.post('/api/demo/disable', (_req, res) => {
 
 app.get('/api/demo/status', (_req, res) => {
     res.json({ demoMode: core.demoMode, coreConnected: core.connected });
+});
+
+// --- Health / Setup Status ---
+app.get('/api/health', async (_req, res) => {
+    const versionFile = path.join(__dirname, '..', 'version.json');
+    let appVersion = null;
+    try {
+        const v = JSON.parse(fs.readFileSync(versionFile, 'utf8'));
+        appVersion = `${v.major}.${v.minor}.${v.patch}.${v.build}`;
+    } catch (_) { /* ignore */ }
+
+    const coreExePath = findCoreExe();
+    let usbpcapStatus = null;
+    if (core.connected) {
+        try {
+            usbpcapStatus = await core.request('usbpcap.status');
+        } catch (_) { /* ignore */ }
+    }
+
+    res.json({
+        ok: true,
+        version: appVersion,
+        node: {
+            version: process.version,
+            platform: process.platform,
+            arch: process.arch
+        },
+        core: {
+            connected: core.connected,
+            exeFound: !!coreExePath,
+            exePath: coreExePath || null,
+            running: !!coreChildProcess
+        },
+        usbpcap: usbpcapStatus || { installed: false },
+        demoMode: core.demoMode,
+        dependencies: {
+            nodejs: {
+                name: 'Node.js',
+                required: '>=20.0.0',
+                current: process.version,
+                installed: true,
+                downloadUrl: 'https://nodejs.org/en/download/'
+            },
+            usbpcap: {
+                name: 'USBPcap',
+                required: '>=1.5.4',
+                installed: !!(usbpcapStatus && usbpcapStatus.installed),
+                downloadUrl: 'https://desowin.org/usbpcap/'
+            },
+            cppCore: {
+                name: 'bhplus-core.exe (C++ 抓包引擎)',
+                required: true,
+                installed: !!coreExePath,
+                downloadUrl: 'https://github.com/nicorz-usbpcapgui/USBPcapGUI/releases'
+            },
+            visualStudio: {
+                name: 'Visual Studio 2022 (C++ 构建工具)',
+                required: '编译 C++ 核心时需要',
+                downloadUrl: 'https://visualstudio.microsoft.com/downloads/'
+            },
+            vcpkg: {
+                name: 'vcpkg (C++ 包管理器)',
+                required: '编译 C++ 核心时需要',
+                downloadUrl: 'https://github.com/microsoft/vcpkg'
+            }
+        }
+    });
 });
 
 app.get('/api/devices', async (req, res) => {

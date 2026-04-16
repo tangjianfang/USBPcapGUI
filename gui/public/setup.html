@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USBPcapGUI - 环境配置向导</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/setup.css">
+</head>
+<body class="setup-body">
+
+<div class="setup-container">
+    <!-- Header -->
+    <header class="setup-header">
+        <h1>⚡ USBPcapGUI 环境配置向导</h1>
+        <p class="setup-subtitle">请按照以下步骤完成依赖安装，即可开始使用 USB 协议分析器。</p>
+    </header>
+
+    <!-- Status Overview -->
+    <section class="setup-status" id="setup-status">
+        <div class="status-loading">正在检测环境…</div>
+    </section>
+
+    <!-- Step Cards -->
+    <section class="setup-steps">
+
+        <!-- Step 1: Node.js -->
+        <div class="setup-card" id="step-nodejs">
+            <div class="card-header">
+                <span class="step-icon" id="icon-nodejs">⏳</span>
+                <div class="card-title">
+                    <h3>步骤 1 — 安装 Node.js 运行环境</h3>
+                    <span class="card-desc">Web GUI 服务器需要 Node.js 20+ 才能运行。</span>
+                </div>
+                <span class="step-status" id="status-nodejs">检测中…</span>
+            </div>
+            <div class="card-body">
+                <div class="card-info">
+                    <p><strong>当前状态：</strong><span id="nodejs-version">检测中…</span></p>
+                    <p><strong>要求：</strong>Node.js &ge; 20.0.0 LTS</p>
+                </div>
+                <div class="card-actions">
+                    <a href="https://nodejs.org/en/download/" target="_blank" rel="noopener" class="btn btn-primary">
+                        ⬇ 下载 Node.js (官网)
+                    </a>
+                    <a href="https://registry.npmmirror.com/binary.html?path=node/" target="_blank" rel="noopener" class="btn">
+                        ⬇ 国内镜像下载
+                    </a>
+                </div>
+                <details class="card-help">
+                    <summary>安装说明</summary>
+                    <ol>
+                        <li>访问 <a href="https://nodejs.org" target="_blank">nodejs.org</a>，下载 <strong>LTS</strong> 版本的 Windows 安装包（.msi）。</li>
+                        <li>运行安装程序，按照默认选项完成安装。</li>
+                        <li>打开命令提示符（CMD），运行 <code>node --version</code> 确认版本号 &ge; 20。</li>
+                        <li>安装完成后，回到项目目录运行 <code>cd gui && npm install && npm start</code> 启动 Web GUI。</li>
+                    </ol>
+                </details>
+            </div>
+        </div>
+
+        <!-- Step 2: npm install -->
+        <div class="setup-card" id="step-npm">
+            <div class="card-header">
+                <span class="step-icon" id="icon-npm">⏳</span>
+                <div class="card-title">
+                    <h3>步骤 2 — 安装 Node.js 依赖</h3>
+                    <span class="card-desc">安装 Express、WebSocket 等运行时依赖包。</span>
+                </div>
+                <span class="step-status" id="status-npm">待检测</span>
+            </div>
+            <div class="card-body">
+                <div class="card-info">
+                    <p>在项目 <code>gui/</code> 目录下运行：</p>
+                    <pre class="code-block">cd gui
+npm install</pre>
+                </div>
+                <details class="card-help">
+                    <summary>常见问题</summary>
+                    <ul>
+                        <li>如果 <code>npm install</code> 很慢，可以使用国内镜像：<code>npm install --registry=https://registry.npmmirror.com</code></li>
+                        <li>如果提示权限错误，请以管理员身份运行命令提示符。</li>
+                    </ul>
+                </details>
+            </div>
+        </div>
+
+        <!-- Step 3: USBPcap -->
+        <div class="setup-card" id="step-usbpcap">
+            <div class="card-header">
+                <span class="step-icon" id="icon-usbpcap">⏳</span>
+                <div class="card-title">
+                    <h3>步骤 3 — 安装 USBPcap 驱动</h3>
+                    <span class="card-desc">USB 抓包功能需要 USBPcap 内核驱动支持。</span>
+                </div>
+                <span class="step-status" id="status-usbpcap">检测中…</span>
+            </div>
+            <div class="card-body">
+                <div class="card-info">
+                    <p><strong>当前状态：</strong><span id="usbpcap-status-text">检测中…</span></p>
+                    <p>USBPcap 是一个开源的 USB 数据包捕获工具，提供 Windows 内核级驱动。</p>
+                </div>
+                <div class="card-actions">
+                    <a href="https://desowin.org/usbpcap/" target="_blank" rel="noopener" class="btn btn-primary">
+                        ⬇ 下载 USBPcap (官网)
+                    </a>
+                    <a href="https://github.com/desowin/usbpcap/releases" target="_blank" rel="noopener" class="btn">
+                        ⬇ GitHub Releases
+                    </a>
+                </div>
+                <details class="card-help">
+                    <summary>安装说明</summary>
+                    <ol>
+                        <li>从官方网站下载最新版 USBPcap 安装程序。</li>
+                        <li>以管理员身份运行安装程序。</li>
+                        <li>安装完成后可能需要重启电脑。</li>
+                        <li>安装后在本页面点击"重新检测"按钮确认状态。</li>
+                    </ol>
+                </details>
+            </div>
+        </div>
+
+        <!-- Step 4: C++ Core -->
+        <div class="setup-card" id="step-core">
+            <div class="card-header">
+                <span class="step-icon" id="icon-core">⏳</span>
+                <div class="card-title">
+                    <h3>步骤 4 — 构建 / 获取 C++ 核心引擎</h3>
+                    <span class="card-desc">bhplus-core.exe 负责与 USBPcap 驱动交互，解析 USB 协议。</span>
+                </div>
+                <span class="step-status" id="status-core">检测中…</span>
+            </div>
+            <div class="card-body">
+                <div class="card-info">
+                    <p><strong>当前状态：</strong><span id="core-status-text">检测中…</span></p>
+                    <p>您可以从 Release 页面下载预编译的二进制文件，或自行编译：</p>
+                    <pre class="code-block"># 使用 CMake + MSVC 构建
+cmake -B build -S . -G "Visual Studio 17 2022" -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=D:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build --config Release --parallel</pre>
+                </div>
+                <div class="card-actions">
+                    <a href="https://github.com/nicorz-usbpcapgui/USBPcapGUI/releases" target="_blank" rel="noopener" class="btn btn-primary">
+                        ⬇ 下载预编译版本
+                    </a>
+                    <a href="https://visualstudio.microsoft.com/downloads/" target="_blank" rel="noopener" class="btn">
+                        ⬇ Visual Studio 2022
+                    </a>
+                    <a href="https://github.com/microsoft/vcpkg" target="_blank" rel="noopener" class="btn">
+                        ⬇ vcpkg 包管理器
+                    </a>
+                </div>
+                <details class="card-help">
+                    <summary>编译依赖</summary>
+                    <ul>
+                        <li><strong>Visual Studio 2022</strong> — 安装 C++ 桌面开发工作负载</li>
+                        <li><strong>CMake 3.28+</strong> — 通常随 Visual Studio 安装</li>
+                        <li><strong>vcpkg</strong> — 用于管理 C++ 第三方库（gtest, spdlog, fmt, nlohmann-json）</li>
+                        <li><strong>Windows SDK 10.0.26100+</strong></li>
+                    </ul>
+                </details>
+            </div>
+        </div>
+
+    </section>
+
+    <!-- Quick Start -->
+    <section class="setup-quickstart">
+        <h2>🚀 快速启动</h2>
+        <div class="quickstart-steps">
+            <div class="qs-step">
+                <span class="qs-num">1</span>
+                <div>
+                    <strong>安装 Node.js</strong>
+                    <p>从 <a href="https://nodejs.org" target="_blank">nodejs.org</a> 下载 LTS 版本并安装。</p>
+                </div>
+            </div>
+            <div class="qs-step">
+                <span class="qs-num">2</span>
+                <div>
+                    <strong>启动 Web GUI</strong>
+                    <pre class="code-block">cd gui
+npm install
+npm start</pre>
+                </div>
+            </div>
+            <div class="qs-step">
+                <span class="qs-num">3</span>
+                <div>
+                    <strong>打开浏览器</strong>
+                    <p>浏览器将自动打开 <a href="http://localhost:17580">http://localhost:17580</a>，如未打开请手动访问。</p>
+                </div>
+            </div>
+            <div class="qs-step">
+                <span class="qs-num">4</span>
+                <div>
+                    <strong>安装 USBPcap（可选）</strong>
+                    <p>如果需要真实 USB 抓包，安装 <a href="https://desowin.org/usbpcap/" target="_blank">USBPcap</a>。 不安装也可使用 Demo 模式体验功能。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Action Bar -->
+    <section class="setup-actions">
+        <button class="btn btn-primary" id="btn-recheck" onclick="checkHealth()">🔄 重新检测环境</button>
+        <a href="/" class="btn btn-success" id="btn-goto-app">▶ 进入主界面</a>
+        <button class="btn" id="btn-demo" onclick="enableDemo()">🎮 启用 Demo 模式</button>
+    </section>
+
+    <!-- Footer -->
+    <footer class="setup-footer">
+        <p>USBPcapGUI — 开源 USB 协议分析器 |
+            <a href="https://github.com/nicorz-usbpcapgui/USBPcapGUI" target="_blank">GitHub</a> |
+            <span id="app-version"></span>
+        </p>
+    </footer>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    async function checkHealth() {
+        const statusEl = document.getElementById('setup-status');
+        statusEl.innerHTML = '<div class="status-loading">正在检测环境…</div>';
+
+        try {
+            const resp = await fetch('/api/health');
+            const data = await resp.json();
+            renderStatus(data);
+        } catch (e) {
+            statusEl.innerHTML = '<div class="status-error">⚠ 无法连接到后端服务。请确保 Node.js 服务器已运行。</div>';
+            setStep('nodejs', false, '未检测到运行中的服务器');
+            setStep('npm', false, '请先启动服务器');
+            setStep('usbpcap', false, '请先启动服务器');
+            setStep('core', false, '请先启动服务器');
+        }
+    }
+
+    function renderStatus(data) {
+        const statusEl = document.getElementById('setup-status');
+        const deps = data.dependencies;
+
+        // Overall status
+        const allGood = deps.nodejs.installed && data.core.exeFound && (data.usbpcap && data.usbpcap.installed);
+        const partial = deps.nodejs.installed;
+
+        if (allGood) {
+            statusEl.innerHTML = '<div class="status-ok">✅ 所有依赖已就绪！您可以直接 <a href="/">进入主界面</a> 开始使用。</div>';
+        } else if (partial) {
+            statusEl.innerHTML = '<div class="status-partial">⚠ 部分依赖未安装。请查看下方详情完成配置。未安装 USBPcap 也可使用 Demo 模式体验功能。</div>';
+        } else {
+            statusEl.innerHTML = '<div class="status-error">❌ 核心依赖缺失。请按照下方步骤安装。</div>';
+        }
+
+        // Version
+        if (data.version) {
+            document.getElementById('app-version').textContent = 'v' + data.version;
+        }
+
+        // Node.js
+        setStep('nodejs', deps.nodejs.installed,
+            deps.nodejs.installed ? '已安装 ' + deps.nodejs.current : '未安装');
+        document.getElementById('nodejs-version').textContent =
+            deps.nodejs.installed ? deps.nodejs.current + ' (' + data.node.platform + ' ' + data.node.arch + ')' : '未检测到';
+
+        // npm (if server is running, deps are installed)
+        setStep('npm', true, '依赖已安装（服务器运行中）');
+
+        // USBPcap
+        const usbInstalled = data.usbpcap && data.usbpcap.installed;
+        setStep('usbpcap', usbInstalled,
+            usbInstalled ? '已安装' : '未安装（可使用 Demo 模式）');
+        document.getElementById('usbpcap-status-text').textContent =
+            usbInstalled ? '已安装并就绪' : '未安装 — 需要安装后才能进行真实 USB 抓包';
+
+        // C++ Core
+        setStep('core', data.core.exeFound,
+            data.core.exeFound
+                ? (data.core.running ? '运行中' : '已找到')
+                : '未找到 bhplus-core.exe');
+        document.getElementById('core-status-text').textContent =
+            data.core.exeFound
+                ? (data.core.connected ? '已连接 (' + data.core.exePath + ')' : '已找到: ' + data.core.exePath)
+                : '未找到 — 请编译或下载预编译版本';
+    }
+
+    function setStep(name, ok, statusText) {
+        const icon = document.getElementById('icon-' + name);
+        const status = document.getElementById('status-' + name);
+        const card = document.getElementById('step-' + name);
+
+        if (icon) icon.textContent = ok ? '✅' : '❌';
+        if (status) {
+            status.textContent = statusText;
+            status.className = 'step-status ' + (ok ? 'step-ok' : 'step-missing');
+        }
+        if (card) {
+            card.classList.toggle('card-ok', ok);
+            card.classList.toggle('card-missing', !ok);
+        }
+    }
+
+    async function enableDemo() {
+        try {
+            await fetch('/api/demo/enable', { method: 'POST' });
+            window.location.href = '/';
+        } catch (e) {
+            alert('无法启用 Demo 模式，请确保服务器已运行。');
+        }
+    }
+
+    // Expose to global scope for onclick handlers
+    window.checkHealth = checkHealth;
+    window.enableDemo = enableDemo;
+
+    // Auto-check on load
+    checkHealth();
+})();
+</script>
+
+</body>
+</html>

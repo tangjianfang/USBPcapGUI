@@ -26,6 +26,7 @@ const App = {
         this._bindResizeHandles();
         this._bindExportDialog();
         this._bindCommandDialog();
+        this._bindSetupBanner();
         this._initWebSocket();
 
         // Initial UI state
@@ -33,6 +34,9 @@ const App = {
         this._updateConnectionBadge('Connecting...', 'badge-info');
         // Init filter presets (multi-select chips + device panel + localStorage restore)
         FilterPresets.init();
+
+        // Check environment health and show setup banner if needed
+        this._checkSetupStatus();
     },
 
     // ---- WebSocket ----
@@ -730,6 +734,55 @@ const App = {
         }
 
         installBtn.disabled = !!status.installed || !status.installerFound;
+        banner.classList.remove('hidden');
+    },
+
+    // ---- Setup Banner ----
+
+    _bindSetupBanner() {
+        const dismissBtn = document.getElementById('btn-dismiss-setup');
+        if (dismissBtn) {
+            dismissBtn.addEventListener('click', () => {
+                const banner = document.getElementById('setup-banner');
+                if (banner) banner.classList.add('hidden');
+                // Remember dismissal for this session
+                sessionStorage.setItem('setup-banner-dismissed', '1');
+            });
+        }
+    },
+
+    async _checkSetupStatus() {
+        // Don't show if user dismissed in this session
+        if (sessionStorage.getItem('setup-banner-dismissed')) return;
+
+        try {
+            const resp = await fetch('/api/health');
+            const data = await resp.json();
+            this._updateSetupBanner(data);
+        } catch (_) {
+            // Server is running (we loaded the page), so skip banner on fetch error
+        }
+    },
+
+    _updateSetupBanner(healthData) {
+        const banner = document.getElementById('setup-banner');
+        const msgEl = document.getElementById('setup-banner-msg');
+        if (!banner || !msgEl) return;
+
+        const issues = [];
+        if (!healthData.core.exeFound) {
+            issues.push('C++ 核心引擎未找到');
+        }
+        if (healthData.usbpcap && !healthData.usbpcap.installed) {
+            issues.push('USBPcap 未安装');
+        }
+
+        if (issues.length === 0) {
+            banner.classList.add('hidden');
+            return;
+        }
+
+        msgEl.textContent = `${issues.join('、')}。点击配置向导查看详细安装说明。`;
         banner.classList.remove('hidden');
     },
 

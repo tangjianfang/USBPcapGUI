@@ -1,0 +1,349 @@
+/* ═══════════════════════════════════════════════════
+    USBPcapGUI - Setup Guide Stylesheet
+   ═══════════════════════════════════════════════════ */
+
+.setup-body {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: block;
+    background: var(--bg-primary);
+}
+
+.setup-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 20px 40px;
+}
+
+/* ── Header ── */
+.setup-header {
+    text-align: center;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setup-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 8px;
+}
+
+.setup-subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+/* ── Status Overview ── */
+.setup-status {
+    margin-bottom: 20px;
+}
+
+.status-loading,
+.status-ok,
+.status-partial,
+.status-error {
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    text-align: center;
+}
+
+.status-loading {
+    background: rgba(33, 150, 243, 0.1);
+    border: 1px solid rgba(33, 150, 243, 0.3);
+    color: var(--info);
+}
+
+.status-ok {
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: var(--success);
+}
+
+.status-ok a { color: var(--success); text-decoration: underline; }
+
+.status-partial {
+    background: rgba(255, 152, 0, 0.1);
+    border: 1px solid rgba(255, 152, 0, 0.3);
+    color: var(--warning);
+}
+
+.status-error {
+    background: rgba(244, 67, 54, 0.1);
+    border: 1px solid rgba(244, 67, 54, 0.3);
+    color: var(--danger);
+}
+
+/* ── Step Cards ── */
+.setup-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 28px;
+}
+
+.setup-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+
+.setup-card.card-ok {
+    border-color: rgba(76, 175, 80, 0.4);
+}
+
+.setup-card.card-missing {
+    border-color: rgba(255, 152, 0, 0.4);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+    cursor: default;
+}
+
+.step-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+}
+
+.card-title {
+    flex: 1;
+}
+
+.card-title h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 2px;
+}
+
+.card-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.step-status {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.step-ok {
+    background: rgba(76, 175, 80, 0.15);
+    color: var(--success);
+}
+
+.step-missing {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--warning);
+}
+
+.card-body {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.card-info {
+    font-size: 13px;
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.card-info p {
+    margin-bottom: 4px;
+}
+
+.card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.card-actions .btn {
+    text-decoration: none;
+}
+
+.btn-primary {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+    background: rgba(0, 122, 204, 0.15);
+}
+
+.card-help {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.card-help summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-weight: 500;
+    padding: 4px 0;
+}
+
+.card-help ol,
+.card-help ul {
+    padding-left: 20px;
+    margin-top: 6px;
+    line-height: 1.8;
+}
+
+.card-help a {
+    color: var(--accent);
+}
+
+.code-block {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-bright);
+    overflow-x: auto;
+    margin: 6px 0;
+    white-space: pre;
+}
+
+/* ── Quick Start ── */
+.setup-quickstart {
+    margin-bottom: 24px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.setup-quickstart h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 12px;
+}
+
+.quickstart-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.qs-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.qs-num {
+    width: 28px;
+    height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.qs-step strong {
+    color: var(--text-bright);
+    display: block;
+    margin-bottom: 2px;
+}
+
+.qs-step p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.qs-step a {
+    color: var(--accent);
+}
+
+/* ── Action Bar ── */
+.setup-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.setup-actions .btn {
+    padding: 8px 20px;
+    font-size: 14px;
+    text-decoration: none;
+}
+
+/* ── Footer ── */
+.setup-footer {
+    text-align: center;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.setup-footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.setup-footer a:hover {
+    text-decoration: underline;
+}
+
+/* ── Setup Banner (for index.html) ── */
+.setup-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: rgba(33, 150, 243, 0.1);
+    border-bottom: 1px solid rgba(33, 150, 243, 0.3);
+}
+
+.setup-banner-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--info);
+}
+
+.setup-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.setup-banner .btn-info {
+    border-color: var(--info);
+    color: var(--info);
+}
+
+.setup-banner .btn-info:hover:not(:disabled) {
+    background: rgba(33, 150, 243, 0.15);
+}
