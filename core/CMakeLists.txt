@@ -1,6 +1,8 @@
-find_package(spdlog CONFIG REQUIRED)
-find_package(fmt CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
+# Simplified version - using standard library instead of external dependencies
+# TODO: Restore external dependencies when network is available
+# find_package(spdlog CONFIG REQUIRED)
+# find_package(fmt CONFIG REQUIRED)
+# find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(bhplus_core STATIC
     src/driver_manager.cpp
@@ -24,12 +26,15 @@ add_library(bhplus_core STATIC
 target_include_directories(bhplus_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/shared/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/spdlog
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/nlohmann
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/fmt
 )
 
 target_link_libraries(bhplus_core PUBLIC
-    spdlog::spdlog
-    fmt::fmt
-    nlohmann_json::nlohmann_json
+    # spdlog::spdlog
+    # fmt::fmt
+    # nlohmann_json::nlohmann_json
     setupapi
     cfgmgr32
     shell32
@@ -37,9 +42,9 @@ target_link_libraries(bhplus_core PUBLIC
 )
 
 # Disable fmt consteval on MSVC (known compatibility issue with fmt 12+)
-if(MSVC)
-    target_compile_definitions(bhplus_core PUBLIC FMT_USE_CONSTEVAL=0)
-endif()
+# if(MSVC)
+#     target_compile_definitions(bhplus_core PUBLIC FMT_USE_CONSTEVAL=0)
+# endif()
 
 # Core service executable
 add_executable(bhplus-core src/main.cpp)
